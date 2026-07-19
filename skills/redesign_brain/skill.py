@@ -30,17 +30,17 @@ BRAIN_HTML = Path(r"C:\Users\hazbi\Projects\tars\dashboard\brain.html")
 # and the plain-link edge colour — everything gets swapped together.
 PALETTES = [
     {"colors": ["#2ecc71", "#2bc9ff", "#ffb14d", "#b06cff", "#7f93a8"],
-     "agents": ["#4dd2ff", "#ffc23d", "#b06cff"],
+     "agents": ["#4dd2ff", "#ffc23d", "#b06cff", "#2ecc71", "#ff9f43"],
      "accent": "#2bc9ff", "synapse": "255,77,141", "edge": "90,130,170"},
     {"colors": ["#ff9f43", "#2dd4bf", "#c084fc", "#fb7185", "#94a3b8"],
-     "agents": ["#38bdf8", "#fbbf24", "#f472b6"],
+     "agents": ["#38bdf8", "#fbbf24", "#f472b6", "#34d399", "#fb923c"],
      "accent": "#a78bfa", "synapse": "255,176,32", "edge": "120,130,150"},
     {"colors": ["#f43f5e", "#22d3ee", "#facc15", "#818cf8", "#a3a3a3"],
-     "agents": ["#34d399", "#fb923c", "#e879f9"],
+     "agents": ["#34d399", "#fb923c", "#e879f9", "#38bdf8", "#facc15"],
      "accent": "#22d3ee", "synapse": "244,63,94", "edge": "110,120,140"},
 ]
 CATEGORY_KEYS = ["About Jacob", "Knowledge", "People", "Projects", "vault"]
-AGENT_KEYS = ["Scout", "Archivist", "Librarian"]
+AGENT_KEYS = ["Scout", "Archivist", "Librarian", "Curator", "Kipp"]
 
 
 def _get_style(html: str) -> dict:

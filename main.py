@@ -197,6 +197,12 @@ def main() -> None:
     import threading
 
     threading.Thread(target=brain.warm, daemon=True).start()
+    # after a healthy minute of uptime, this running set of core files is
+    # proven bootable — snapshot it so boot.py can roll back a bad Kipp
+    # self-upgrade that breaks start-up
+    import improve
+
+    threading.Timer(60, improve.snapshot_last_good).start()
     from wakeword import make_wakeword
 
     waker = make_wakeword(BASE)
@@ -237,8 +243,10 @@ def main() -> None:
                     if frames_seen % 12 == 0:  # roughly once a second
                         import announce
                         import agents
+                        import improve
 
                         agents.tick()  # Scout runs itself each morning
+                        improve.tick()  # Kipp self-improves whenever idle
                         for announcement in timers_watch.pop_due() + announce.pop():
                             print(f"TARS: {announcement}")
                             log("said", announcement)

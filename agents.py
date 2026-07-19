@@ -28,6 +28,8 @@ AGENTS = {
     "Librarian": "housekeeps the brain: links near-duplicate memories together",
     "Curator": "audits quarantined memories against the real transcripts — "
                "restores the genuine, rejects the fabricated",
+    "Kipp": "self-improvement engineer: re-reads the day's transcripts for "
+            "friction while TARS idles, then upgrades TARS's own code",
 }
 
 

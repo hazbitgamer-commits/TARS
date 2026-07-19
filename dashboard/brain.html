@@ -124,7 +124,7 @@ function setGraph(data){
 }
 
 // ---------- agents ----------
-const AGENT_STYLE={Scout:"#38bdf8",Archivist:"#fbbf24",Librarian:"#f472b6"};
+const AGENT_STYLE={Scout:"#38bdf8",Archivist:"#fbbf24",Librarian:"#f472b6",Curator:"#34d399",Kipp:"#fb923c"};
 {let k=0;for(const [name,color] of Object.entries(AGENT_STYLE)){
   agents.set(name,{color,x:-440+k*440,y:-430,hx:-440+k*440,hy:-430,
                    queue:[],target:null,linger:0});k++}}
