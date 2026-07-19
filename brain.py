@@ -155,14 +155,50 @@ class Brain:
                              {"role": "assistant", "content": reply}]
             return reply
         if name == "new_skill":
-            # mishearings kept triggering expensive learning runs — confirm first
             request = (route.get("args") or {}).get("request") or text
-            self.pending_learn = request
-            reply = (f"I don't have a skill for that. Want me to teach myself "
-                     f"to {request}? Say yes and I'll get to work.")
-            self.history += [{"role": "user", "content": text},
-                             {"role": "assistant", "content": reply}]
-            return reply
+            req_low = request.lower()
+            # Jacob went in circles (2026-07-19): the router kept proposing
+            # brand-new skills for jobs an EXISTING skill already covered —
+            # five overlapping GitHub skills in one morning. Rescue layers:
+            covered = None
+            if any(w in req_low for w in ("upload", "publish", "push")) and \
+                    any(w in req_low for w in ("github", "repo", "repository")):
+                covered = ("github_file" if "github_file" in real and any(
+                    w in req_low for w in (".py", ".txt", "file "))
+                    else "github_publish")
+            else:
+                named = [s for s in real if s != "deep_task"
+                         and s.replace("_", " ") in req_low]
+                if named:
+                    covered = max(named, key=len)
+            explicit_learn = any(p in req_low for p in
+                                 ("teach yourself", "learn how", "learn to"))
+            if covered in real:
+                if explicit_learn:
+                    return (f"I already know how — that's my "
+                            f"{covered.replace('_', ' ')} skill. Just ask me "
+                            f"to do it and I will.")
+                name = covered
+                route["args"] = {}
+            else:
+                # questions and trailed-off speech are conversation, never
+                # skill proposals ("Good, but how long until you're done?")
+                first_words = [w.strip(",.?!") for w in req_low.split()[:5]]
+                if ("?" in request or request.rstrip().endswith("...")
+                        or any(w in ("how", "what", "why", "when", "who",
+                                     "can", "could", "does", "is", "are",
+                                     "should") for w in first_words)):
+                    name = "chat"
+                else:
+                    # mishearings kept triggering expensive learning runs —
+                    # confirm first
+                    self.pending_learn = request
+                    reply = (f"I don't have a skill for that. Want me to "
+                             f"teach myself to {request}? Say yes and I'll "
+                             f"get to work.")
+                    self.history += [{"role": "user", "content": text},
+                                     {"role": "assistant", "content": reply}]
+                    return reply
         # hard gates: dangerous or noisy skills need the trigger word actually
         # said — the router alone has let garbled speech through before
         if name == "run_command" and "run " not in lowered and "command" not in lowered:
@@ -397,6 +433,13 @@ class Brain:
             'speak through my monitor speakers -> {"skill": "voice_output", "args": {"target": "monitor"}}\n'
             'switch your voice to my headphones -> {"skill": "voice_output", "args": {"target": "headphones"}}\n'
             'list voice outputs -> {"skill": "voice_output", "args": {"target": "list"}}\n'
+            'list your voices -> {"skill": "list_voices", "args": {}}\n'
+            'what voices can you use -> {"skill": "list_voices", "args": {}}\n'
+            'upload yourself to github -> {"skill": "github_publish", "args": {}}\n'
+            'upload yourself to that repository -> {"skill": "github_publish", "args": {}}\n'
+            'upload countdown dot py to github -> {"skill": "github_file", "args": {"file": "countdown.py"}}\n'
+            'open a notes box -> {"skill": "notes_box", "args": {}}\n'
+            'what objects do you see -> {"skill": "object_detection", "args": {}}\n'
             'use a british accent -> {"skill": "voice_settings", "args": {"voice": "british"}}\n'
             'sound like an american female -> {"skill": "voice_settings", "args": {"voice": "american female"}}\n'
             'talk faster -> {"skill": "voice_settings", "args": {"rate": "+15"}}\n'
@@ -501,6 +544,10 @@ class Brain:
             "asterisks.",
             "Never invent memories, people, or past conversations. If Jacob says "
             "a name or thing you don't actually know, say you don't know it.",
+            "When you're teaching yourself a new skill (a big-brain task is "
+            "running), it finishes in a FEW MINUTES — two to ten. Never say "
+            "it takes hours; that's a lie. You'll announce out loud the "
+            "moment it's done, so Jacob never needs a timer for it.",
             "You're talking WITH Jacob, not executing at him. When his request "
             "is ambiguous or incomplete, ask ONE short, specific clarifying "
             "question — offer your best guess ('Did you mean X?') rather than "
