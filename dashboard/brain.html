@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TARS — Brain</title>
+<style>
+:root{
+  --bg-a:#0a1220;--bg-b:#04070d;--bg-c:#020308;
+  --accent:#a78bfa;--bright:#eaf6ff;--mid:#cfe3f5;--dim:#4e6579;--faint:#41576b;
+  --border:#16304a;--synapse:#ffb020;
+}
+body{margin:0;background:radial-gradient(ellipse at 50% 40%,var(--bg-a) 0%,var(--bg-b) 65%,var(--bg-c) 100%);
+  overflow:hidden;font:13px "Segoe UI",sans-serif;color:var(--mid)}
+#view{display:block;cursor:grab}
+#view.point{cursor:pointer}
+#hud{position:fixed;top:14px;left:18px;z-index:5;pointer-events:none}
+#hud h1{font-size:16px;letter-spacing:9px;font-weight:300;color:var(--bright);margin:0;
+  text-shadow:0 0 18px rgba(90,170,255,.55)}
+#hud .sub{color:var(--dim);margin-top:4px;font-size:11px}
+#legend{position:fixed;top:14px;right:18px;z-index:5;color:var(--dim);font-size:11px;text-align:right;pointer-events:none}
+#legend .legend-title{letter-spacing:3px;color:var(--faint);font-size:10px;margin-bottom:5px}
+#legend div{margin:3px 0}
+#legend .swatch{display:inline-block;width:7px;height:7px;border-radius:50%;margin-left:8px;vertical-align:middle}
+#legend .ln{display:inline-block;width:14px;height:2px;margin-left:8px;vertical-align:middle}
+#search{position:fixed;top:172px;right:18px;z-index:6;width:190px;background:rgba(8,14,24,.8);
+  border:1px solid var(--border);border-radius:14px;padding:6px 14px;color:var(--mid);font:12px "Segoe UI";outline:none}
+#search::placeholder{color:var(--faint)}
+#feedlog{position:fixed;bottom:64px;left:18px;z-index:5;font-family:Consolas,monospace;
+  font-size:11px;color:var(--accent);max-width:38vw;pointer-events:none;opacity:.85;line-height:1.7}
+#feedbox{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:6;
+  width:min(440px,66vw);background:rgba(8,14,24,.85);border:1px solid var(--border);border-radius:20px;
+  padding:9px 18px;color:var(--mid);font:13px "Segoe UI";outline:none;backdrop-filter:blur(8px)}
+#feedbox::placeholder{color:var(--faint)}
+#hint{position:fixed;bottom:16px;right:18px;z-index:5;color:var(--faint);font-size:11px;pointer-events:none}
+#panel{position:fixed;top:0;right:-390px;width:360px;height:100vh;z-index:8;
+  background:rgba(7,12,20,.95);border-left:1px solid var(--border);backdrop-filter:blur(12px);
+  padding:20px 22px;box-sizing:border-box;overflow-y:auto;transition:right .25s ease}
+#panel.open{right:0}
+#panel h2{margin:0 0 2px;font-size:19px;color:var(--bright);font-weight:400}
+#panel .chip{display:inline-block;font-size:10px;letter-spacing:2px;text-transform:uppercase;
+  border:1px solid var(--border);border-radius:10px;padding:2px 10px;margin:6px 0 12px;color:#8fa3b8}
+#panel .meta{color:var(--dim);font-size:11px;margin-bottom:12px}
+#panel h3{font-size:10px;letter-spacing:3px;text-transform:uppercase;color:var(--accent);margin:16px 0 6px}
+#panel .body{white-space:pre-wrap;font-size:12.5px;line-height:1.6;color:#b8c9da;
+  background:rgba(255,255,255,.03);border-radius:8px;padding:10px 12px;max-height:32vh;overflow-y:auto}
+#panel .syn{margin:5px 0;font-size:12px}
+#panel .bar{display:inline-block;height:5px;background:var(--synapse);border-radius:3px;
+  vertical-align:middle;margin-right:8px;box-shadow:0 0 8px var(--synapse)}
+#panel a{color:var(--accent);text-decoration:none}
+#panel .close{position:absolute;top:12px;right:16px;color:var(--dim);cursor:pointer;font-size:18px}
+#panel .close:hover{color:#fff}
+#panel .linkchip{display:inline-block;border:1px solid var(--border);border-radius:6px;
+  padding:2px 8px;margin:2px 3px 2px 0;font-size:11px;color:#9fb4c8;cursor:pointer}
+#panel .linkchip:hover{border-color:var(--accent);color:var(--accent)}
+::-webkit-scrollbar{width:8px}::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+<div id="hud"><h1>TARS BRAIN</h1><div class="sub" id="stats">waking…</div></div>
+<div id="legend"><div class="legend-title">LEGEND</div><div id="legendBody"></div></div>
+<input id="search" placeholder="find a memory…" autocomplete="off">
+<div id="feedlog"></div>
+<input id="feedbox" placeholder="feed the brain… type something and press Enter" autocomplete="off">
+<div id="hint">hover to focus · click for details · drag to pan · scroll to zoom</div>
+<div id="panel"><span class="close" onclick="panel.classList.remove('open')">✕</span><div id="panelBody"></div></div>
+<script>
+// STYLE controls the look of the map: node size, line thickness, colours, legend.
+// Tweaked by the redesign_brain skill — keep every visual knob here, nowhere else.
+const STYLE={nodeBase:6.3,nodeMax:9.1,nodeMul:2,
+             lineNormal:0.6,lineLearnedBase:0.6,lineLearnedMul:1.5,
+             legend:true,edgeNormal:"120,130,150",synapse:"255,176,32"};
+const COLORS={"About Jacob":"#ff9f43","Knowledge":"#2dd4bf","People":"#c084fc","Projects":"#fb7185","vault":"#94a3b8"};
+const LEGEND_LABELS={"About Jacob":"About Jacob","Knowledge":"Knowledge","People":"People",
+              "Projects":"Projects","vault":"Other notes"};
+const ZONES={"About Jacob":[-320,-40],"Knowledge":[300,-60],"People":[40,300],
+             "Projects":[-60,-320],"vault":[0,80]};
+function buildLegend(){
+  const el=document.getElementById("legend");
+  el.style.display=STYLE.legend?"":"none";
+  let html="";
+  for(const [key,label] of Object.entries(LEGEND_LABELS))
+    html+=`<div><span class="swatch" style="background:${COLORS[key]}"></span>${label}</div>`;
+  html+=`<div><span class="ln" style="background:rgb(${STYLE.synapse})"></span>learned synapse</div>`;
+  html+=`<div><span class="ln" style="background:rgb(${STYLE.edgeNormal})"></span>written link</div>`;
+  document.getElementById("legendBody").innerHTML=html;
+}
+buildLegend();
+const canvas=document.getElementById("view"),ctx=canvas.getContext("2d");
+const panel=document.getElementById("panel");
+let W,H,DPR=Math.min(devicePixelRatio,2);
+function resize(){W=innerWidth;H=innerHeight;canvas.width=W*DPR;canvas.height=H*DPR;
+  canvas.style.width=W+"px";canvas.style.height=H+"px"}
+resize();addEventListener("resize",resize);
+
+const cam={x:0,y:0,z:0.9};
+const nodes=new Map(),agents=new Map();
+let edges=[],hovered=null,searchTerm="",dragNode=null,panning=false,downAt=null;
+
+const toScreen=(x,y)=>[(x-cam.x)*cam.z+W/2,(y-cam.y)*cam.z+H/2];
+const toWorld=(sx,sy)=>[(sx-W/2)/cam.z+cam.x,(sy-H/2)/cam.z+cam.y];
+
+function setGraph(data){
+  const degree={};
+  for(const e of data.edges){degree[e.a]=(degree[e.a]||0)+1;degree[e.b]=(degree[e.b]||0)+1}
+  const seen=new Set();
+  for(const n of data.nodes){
+    seen.add(n.id);
+    if(!nodes.has(n.id)){
+      const z=ZONES[n.folder]||ZONES.vault;
+      nodes.set(n.id,{x:z[0]+(Math.random()-.5)*240,y:z[1]+(Math.random()-.5)*240,
+        vx:0,vy:0,glow:0,folder:n.folder});
+    }
+    const node=nodes.get(n.id);
+    node.deg=degree[n.id]||0;
+    node.r=STYLE.nodeBase+Math.min(STYLE.nodeMax,node.deg*STYLE.nodeMul);
+    node.color=COLORS[n.folder]||COLORS.vault;
+  }
+  for(const id of [...nodes.keys()]) if(!seen.has(id)) nodes.delete(id);
+  edges=data.edges.filter(e=>nodes.has(e.a)&&nodes.has(e.b));
+  const learned=edges.filter(e=>e.type==="learned").length;
+  document.getElementById("stats").textContent=
+    `${nodes.size} memories · ${edges.length-learned} links · ${learned} learned synapses`;
+}
+
+// ---------- agents ----------
+const AGENT_STYLE={Scout:"#38bdf8",Archivist:"#fbbf24",Librarian:"#f472b6"};
+{let k=0;for(const [name,color] of Object.entries(AGENT_STYLE)){
+  agents.set(name,{color,x:-440+k*440,y:-430,hx:-440+k*440,hy:-430,
+                   queue:[],target:null,linger:0});k++}}
+function agentVisit(name,names){
+  const a=agents.get(name);if(!a)return;
+  for(const n of names) if(nodes.has(n)) a.queue.push(n);
+}
+function stepAgents(){
+  for(const a of agents.values()){
+    if(!a.target&&a.queue.length)a.target=a.queue.shift();
+    let tx=a.hx,ty=a.hy,beam=false;
+    if(a.target){
+      const n=nodes.get(a.target);
+      if(!n)a.target=null;
+      else{
+        tx=n.x;ty=n.y-34;
+        if(Math.hypot(a.x-tx,a.y-ty)<8){
+          n.glow=Math.max(n.glow,1);beam=true;
+          if(!a.linger)a.linger=90;
+          if(--a.linger<=0){a.target=null;a.linger=0}
+        }
+      }
+    }
+    a.x+=(tx-a.x)*0.05;a.y+=(ty-a.y)*0.05;a.beam=beam;
+  }
+}
+
+// ---------- physics ----------
+function physics(){
+  const arr=[...nodes.values()];
+  for(let i=0;i<arr.length;i++)for(let j=i+1;j<arr.length;j++){
+    const a=arr[i],b=arr[j];
+    let dx=a.x-b.x,dy=a.y-b.y;
+    const d2=dx*dx+dy*dy||1,d=Math.sqrt(d2);
+    const minGap=a.r+b.r+26;
+    const push=d<minGap?(minGap-d)*0.06:Math.min(3,2600/d2);
+    dx/=d;dy/=d;
+    a.vx+=dx*push;a.vy+=dy*push;b.vx-=dx*push;b.vy-=dy*push;
+  }
+  for(const e of edges){
+    const a=nodes.get(e.a),b=nodes.get(e.b);
+    const dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy)||1;
+    const rest=e.type==="learned"?120:150;
+    const k=(d-rest)*(e.type==="learned"?0.0025+e.w*0.004:0.002);
+    a.vx+=dx/d*k;a.vy+=dy/d*k;b.vx-=dx/d*k;b.vy-=dy/d*k;
+  }
+  for(const n of nodes.values()){
+    const z=ZONES[n.folder]||ZONES.vault;
+    n.vx+=(z[0]-n.x)*0.0012;n.vy+=(z[1]-n.y)*0.0012;
+    n.vx*=0.85;n.vy*=0.85;
+    if(n!==dragNode){n.x+=n.vx;n.y+=n.vy}
+    n.glow=Math.max(0,n.glow-0.012);
+  }
+}
+
+// ---------- drawing ----------
+function neighborsOf(name){
+  const s=new Set([name]);
+  for(const e of edges){if(e.a===name)s.add(e.b);if(e.b===name)s.add(e.a)}
+  return s;
+}
+function draw(){
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.clearRect(0,0,W,H);
+  const focus=hovered?neighborsOf(hovered):null;
+  const term=searchTerm.trim().toLowerCase();
+
+  for(const e of edges){
+    const a=nodes.get(e.a),b=nodes.get(e.b);
+    const [ax,ay]=toScreen(a.x,a.y),[bx,by]=toScreen(b.x,b.y);
+    const inFocus=focus&&(focus.has(e.a)&&focus.has(e.b));
+    let alpha=e.type==="learned"?0.25+e.w*0.5:0.16;
+    if(focus)alpha=inFocus?Math.min(1,alpha*3):0.04;
+    ctx.strokeStyle=e.type==="learned"?`rgba(${STYLE.synapse},${alpha})`:`rgba(${STYLE.edgeNormal},${alpha})`;
+    ctx.lineWidth=e.type==="learned"?STYLE.lineLearnedBase+e.w*STYLE.lineLearnedMul:STYLE.lineNormal;
+    ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(bx,by);ctx.stroke();
+  }
+
+  for(const [name,n] of nodes){
+    const [sx,sy]=toScreen(n.x,n.y);
+    if(sx<-80||sy<-80||sx>W+80||sy>H+80)continue;
+    const r=n.r*cam.z;
+    let dim=1;
+    if(focus&&!focus.has(name))dim=0.18;
+    if(term&&!name.toLowerCase().includes(term))dim=Math.min(dim,0.15);
+    const glow=n.glow;
+    // halo
+    const halo=ctx.createRadialGradient(sx,sy,r*0.4,sx,sy,r*(2.2+glow*2));
+    halo.addColorStop(0,n.color+"55");halo.addColorStop(1,n.color+"00");
+    ctx.globalAlpha=dim*(0.5+glow);
+    ctx.fillStyle=halo;
+    ctx.beginPath();ctx.arc(sx,sy,r*(2.2+glow*2),0,7);ctx.fill();
+    // body
+    ctx.globalAlpha=dim;
+    ctx.fillStyle=n.color;
+    ctx.beginPath();ctx.arc(sx,sy,r*(1+glow*0.25),0,7);ctx.fill();
+    if(name===hovered){
+      ctx.strokeStyle="#eaf6ff";ctx.lineWidth=2;
+      ctx.beginPath();ctx.arc(sx,sy,r+4,0,7);ctx.stroke();
+    }
+    // label — everything readable, always
+    const fs=Math.max(10,Math.min(15,(10+n.deg)*cam.z));
+    ctx.font=`${name===hovered?"600 ":""}${fs}px Segoe UI`;
+    ctx.textAlign="center";
+    ctx.fillStyle=`rgba(217,232,247,${0.9*dim})`;
+    ctx.shadowColor="#000";ctx.shadowBlur=6;
+    ctx.fillText(name,sx,sy+r+fs+4);
+    ctx.shadowBlur=0;
+  }
+  ctx.globalAlpha=1;
+
+  for(const [name,a] of agents){
+    const [sx,sy]=toScreen(a.x,a.y);
+    if(a.beam&&a.target&&nodes.has(a.target)){
+      const t=nodes.get(a.target);const [tx,ty]=toScreen(t.x,t.y);
+      ctx.strokeStyle=a.color+"aa";ctx.lineWidth=1.5;
+      ctx.setLineDash([4,4]);
+      ctx.beginPath();ctx.moveTo(sx,sy);ctx.lineTo(tx,ty);ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.save();
+    ctx.translate(sx,sy);ctx.rotate(performance.now()/900);
+    ctx.fillStyle=a.color;
+    ctx.fillRect(-6,-6,12,12);
+    ctx.restore();
+    ctx.font="10px Segoe UI";ctx.textAlign="center";
+    ctx.fillStyle="#8fa3b8";
+    ctx.fillText(name,sx,sy-14);
+  }
+}
+(function loop(){requestAnimationFrame(loop);physics();stepAgents();draw()})();
+
+// ---------- interaction ----------
+function nodeAt(sx,sy){
+  const [wx,wy]=toWorld(sx,sy);
+  let best=null,bd=1e9;
+  for(const [name,n] of nodes){
+    const d=Math.hypot(n.x-wx,n.y-wy);
+    if(d<n.r+8&&d<bd){best=name;bd=d}
+  }
+  return best;
+}
+canvas.addEventListener("mousedown",e=>{
+  downAt=[e.clientX,e.clientY];
+  const hit=nodeAt(e.clientX,e.clientY);
+  if(hit)dragNode=nodes.get(hit);else panning=true;
+});
+addEventListener("mouseup",e=>{
+  if(downAt&&Math.hypot(e.clientX-downAt[0],e.clientY-downAt[1])<5){
+    const hit=nodeAt(e.clientX,e.clientY);
+    if(hit)openPanel(hit);
+  }
+  dragNode=null;panning=false;downAt=null;
+});
+addEventListener("mousemove",e=>{
+  if(dragNode){const [wx,wy]=toWorld(e.clientX,e.clientY);dragNode.x=wx;dragNode.y=wy;
+    dragNode.vx=dragNode.vy=0;return}
+  if(panning){cam.x-=e.movementX/cam.z;cam.y-=e.movementY/cam.z;return}
+  hovered=nodeAt(e.clientX,e.clientY);
+  canvas.classList.toggle("point",!!hovered);
+});
+canvas.addEventListener("wheel",e=>{
+  e.preventDefault();
+  const f=e.deltaY<0?1.12:0.89;
+  const [wx,wy]=toWorld(e.clientX,e.clientY);
+  cam.z=Math.max(0.25,Math.min(3.2,cam.z*f));
+  const [sx2,sy2]=toScreen(wx,wy);
+  cam.x+=(sx2-e.clientX)/cam.z;cam.y+=(sy2-e.clientY)/cam.z;
+},{passive:false});
+document.getElementById("search").addEventListener("input",e=>searchTerm=e.target.value);
+
+// ---------- detail panel ----------
+async function openPanel(name){
+  try{
+    const d=await (await fetch("/api/brain/note?name="+encodeURIComponent(name))).json();
+    if(d.error)return;
+    const esc=s=>{const x=document.createElement("span");x.textContent=s;return x.innerHTML};
+    let html=`<h2>${esc(d.name)}</h2><span class="chip">${esc(d.folder)}</span>`;
+    html+=`<div class="meta">fired ${d.fired_count}×${d.last_fired?" · last "+esc(d.last_fired):""}</div>`;
+    html+=`<h3>What it says</h3><div class="body">${esc(d.body||"(empty)")}</div>`;
+    if(d.synapses&&d.synapses.length){
+      html+=`<h3>Learned associations</h3>`;
+      for(const s of d.synapses)
+        html+=`<div class="syn"><span class="bar" style="width:${8+s.w*90}px"></span>`
+             +`<span class="linkchip" onclick="openPanel('${esc(s.other)}')">${esc(s.other)}</span> ${s.w}</div>`;
+    }
+    if(d.links&&d.links.length){
+      html+=`<h3>Written links</h3>`;
+      for(const l of d.links)
+        html+=`<span class="linkchip" onclick="openPanel('${esc(l)}')">${esc(l)}</span>`;
+    }
+    html+=`<h3></h3><a href="${d.obsidian}">Open in Obsidian →</a>`;
+    document.getElementById("panelBody").innerHTML=html;
+    panel.classList.add("open");
+  }catch(e){}
+}
+
+// ---------- live data ----------
+let lastAct=0;
+function feedline(t){const d=document.getElementById("feedlog");
+  d.innerHTML=(t+"<br>"+d.innerHTML).split("<br>").slice(0,6).join("<br>")}
+async function pollActivity(){
+  try{
+    const acts=await (await fetch("/api/brain/activity")).json();
+    for(const a of acts){
+      if(a.t<=lastAct)continue;lastAct=Math.max(lastAct,a.t);
+      const names=[];
+      for(const f of a.fired){
+        const n=nodes.get(f.name);
+        if(n){n.glow=Math.min(1.4,f.strength*1.4);names.push(f.name)}
+      }
+      if(names.length){
+        if(agents.has(a.source))agentVisit(a.source,names);
+        feedline("⚡ "+a.source+": "+names.join(" · "));
+      }
+    }
+  }catch(e){document.getElementById("stats").textContent="offline — is TARS running?"}
+}
+document.getElementById("feedbox").addEventListener("keydown",async e=>{
+  if(e.key!=="Enter")return;
+  const text=e.target.value.trim();if(!text)return;
+  e.target.value="";
+  try{
+    const r=await (await fetch("/api/brain/feed",{method:"POST",
+      body:JSON.stringify({text})})).json();
+    for(const f of (r.fired||[])){
+      const n=nodes.get(f.name);if(n)n.glow=Math.min(1.4,f.strength*1.4);
+    }
+    feedline("⚡ you fed: "+(r.fired||[]).map(f=>f.name).join(" · "));
+  }catch(err){}
+});
+async function pollGraph(){
+  try{setGraph(await (await fetch("/api/brain")).json())}
+  catch(e){document.getElementById("stats").textContent="offline — is TARS running?"}
+}
+pollGraph();setInterval(pollGraph,15000);setInterval(pollActivity,1000);
+</script>
+</body>
+</html>

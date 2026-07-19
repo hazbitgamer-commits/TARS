@@ -1,0 +1,418 @@
+"""TARS — always-on voice assistant. Core loop (Phase 1).
+
+Flow: wake word ("Hey Jarvis" for now, custom "TARS" later) -> record command
+      -> transcribe (whisper) -> brain (Ollama, local) -> speak (edge-tts, free).
+
+Wake word engine: openWakeWord — fully local, free, no account needed.
+If it fails to load, falls back to press-Enter-to-talk.
+"""
+import truststore
+
+truststore.inject_into_ssl()  # trust Windows' certificate store (Avast intercepts TLS)
+
+import datetime
+import json
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+import sounddevice as sd
+from dotenv import load_dotenv
+
+BASE = Path(__file__).parent
+load_dotenv(BASE / ".env")
+
+from brain import Brain      # noqa: E402
+from stt import Transcriber  # noqa: E402
+from tts import Speaker      # noqa: E402
+from ui import StatusUI      # noqa: E402
+
+SAMPLE_RATE = 16000
+FRAME_LEN = 1280         # 80 ms frames — what openWakeWord expects
+WAKE_THRESHOLD = 0.5     # openWakeWord confidence needed to wake
+MAX_COMMAND_SEC = 12     # hard stop for one command
+SILENCE_STOP_SEC = 0.8   # stop recording after this much silence
+MIN_SPEECH_SEC = 0.4     # ignore recordings shorter than this
+WAIT_FOR_SPEECH_SEC = 6  # after the wake word, give up if no speech starts
+FOLLOWUP_SEC = 5         # after a reply, keep listening this long for more
+CONFIRM_BELOW = -0.55    # shaky transcription confidence: ask "did you say..?"
+
+END_WORDS = ("that's all", "thats all", "that is all", "that's it", "thats it",
+             "never mind", "nevermind", "stop listening", "thanks tars",
+             "thank you tars")
+SLEEP_WORDS = ("go to sleep", "sleep mode", "go quiet")
+WAKE_UP_WORDS = ("wake up", "i'm back", "wakey")
+SHUTDOWN_WORDS = ("goodbye tars", "goodbye, tars", "shut down tars", "tars shut down",
+                  "shut yourself down", "power down")
+
+
+def vault_conversation_line(day: str, hhmm: str, kind: str, text: str) -> None:
+    """Append one exchange line to the vault's daily conversation note."""
+    conv_dir = BASE / "vault" / "Conversations"
+    conv_dir.mkdir(parents=True, exist_ok=True)
+    note = conv_dir / f"Conversation {day}.md"
+    if not note.exists():
+        note.write_text(f"---\ncreated: {day}\ntags:\n  - conversation\n---\n\n",
+                        encoding="utf-8")
+        journal_dir = BASE / "vault" / "Journal"
+        journal_dir.mkdir(exist_ok=True)
+        with open(journal_dir / f"Journal {day}.md", "a", encoding="utf-8") as jf:
+            jf.write(f"- Conversation log: [[Conversation {day}]]\n")
+    who = "Jacob" if kind == "heard" else "TARS"
+    with open(note, "a", encoding="utf-8") as f:
+        f.write(f"- **{hhmm}** {who}: {text}\n")
+
+
+def log(kind: str, text: str) -> None:
+    now = datetime.datetime.now()
+    day = datetime.date.today().isoformat()
+    line = json.dumps(
+        {"t": now.isoformat(timespec="seconds"), "kind": kind, "text": text}
+    )
+    logs = BASE / "logs"
+    logs.mkdir(exist_ok=True)
+    with open(logs / f"{day}.jsonl", "a", encoding="utf-8") as f:
+        f.write(line + "\n")
+    try:
+        vault_conversation_line(day, now.strftime("%H:%M"), kind, text)
+    except OSError:
+        pass
+
+
+class AutoGain:
+    """Boosts quiet mic input toward a target loudness — early-morning
+    whisper-voice still reaches the wake word and the transcriber."""
+
+    def __init__(self, target: float = 0.06, limit: float = 8.0):
+        self.gain = 2.0
+        self.target = target
+        self.limit = limit
+
+    def process(self, pcm: np.ndarray) -> np.ndarray:
+        f = pcm.astype(np.float32) / 32768.0
+        rms = float(np.sqrt(np.mean(f**2)))
+        if rms > 0.003:  # adapt on signal, not on silence
+            desired = self.target / max(rms, 1e-6)
+            self.gain = float(np.clip(0.9 * self.gain + 0.1 * desired, 1.0, self.limit))
+        boosted = np.clip(f * self.gain, -1.0, 1.0)
+        return (boosted * 32767).astype(np.int16)
+
+
+def beep(freq: int = 880, dur: float = 0.12) -> None:
+    t = np.linspace(0, dur, int(44100 * dur), False)
+    tone = (0.25 * np.sin(2 * np.pi * freq * t)).astype(np.float32)
+    sd.play(tone, 44100)
+    sd.wait()
+
+
+def ambient_threshold(stream, agc: AutoGain) -> float:
+    """Listen briefly to the room and set a speech-detection threshold."""
+    chunks = []
+    for _ in range(max(1, int(0.5 * SAMPLE_RATE / FRAME_LEN))):
+        data, _ = stream.read(FRAME_LEN)
+        chunks.append(agc.process(np.frombuffer(bytes(data), dtype=np.int16)))
+    ambient = np.concatenate(chunks).astype(np.float32) / 32768.0
+    rms = float(np.sqrt(np.mean(ambient**2)))
+    return max(rms * 2.5, 0.005)
+
+
+def record_command(stream, threshold: float, agc: AutoGain,
+                   wait_sec: float = WAIT_FOR_SPEECH_SEC) -> np.ndarray | None:
+    """Record from an open 16 kHz int16 stream until silence or timeout.
+
+    Returns None if no speech starts within wait_sec.
+    """
+    frames: list[np.ndarray] = []
+    heard_speech = False
+    silence_frames = 0
+    elapsed_frames = 0
+    frames_per_sec = SAMPLE_RATE / FRAME_LEN
+    max_frames = int(MAX_COMMAND_SEC * frames_per_sec)
+    stop_after = max(1, int(SILENCE_STOP_SEC * frames_per_sec))
+    give_up_after = int(wait_sec * frames_per_sec)
+
+    while elapsed_frames < max_frames:
+        data, _ = stream.read(FRAME_LEN)
+        elapsed_frames += 1
+        pcm = agc.process(np.frombuffer(bytes(data), dtype=np.int16))
+        frames.append(pcm)
+        rms = float(np.sqrt(np.mean((pcm.astype(np.float32) / 32768.0) ** 2)))
+        if rms >= threshold:
+            heard_speech = True
+            silence_frames = 0
+        elif heard_speech:
+            silence_frames += 1
+            if silence_frames >= stop_after:
+                break
+        elif elapsed_frames >= give_up_after:
+            return None
+
+    if not heard_speech:
+        return None
+    audio = np.concatenate(frames).astype(np.float32) / 32768.0
+    if len(audio) / SAMPLE_RATE < MIN_SPEECH_SEC:
+        return None
+    return audio
+
+
+def ensure_single_instance() -> None:
+    """If an older TARS is still running, close it — no double voices."""
+    import os
+
+    import psutil
+
+    me = os.getpid()
+    for p in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            if p.pid == me or not (p.info["name"] or "").lower().startswith("python"):
+                continue
+            args = [a.lower() for a in (p.info["cmdline"] or [])]
+            # exact argument match only — a script merely *mentioning* main.py
+            # (like a diagnostic command) must not count as a TARS instance
+            if any(a.endswith("main.py") for a in args) and any("tars" in a for a in args):
+                p.terminate()
+                print("(closed an older TARS instance)")
+        except psutil.Error:
+            continue
+
+
+def main() -> None:
+    print("TARS is starting up...")
+    ensure_single_instance()
+    import audio_out
+
+    audio_out.apply_saved()  # voice comes out wherever Jacob last put it
+    ui = StatusUI()
+    import dashboard
+
+    dashboard.start()  # localhost:8765, "show me the home page"
+
+    def set_state(s: str) -> None:
+        ui.set(s)
+        dashboard.set_status(s)
+    speaker = Speaker()
+    transcriber = Transcriber()
+    brain = Brain(BASE)
+    import threading
+
+    threading.Thread(target=brain.warm, daemon=True).start()
+    from wakeword import make_wakeword
+
+    waker = make_wakeword(BASE)
+
+    def open_mic():
+        device = audio_out.pick_input()  # pinned to the LifeCam, not the default
+        s = sd.RawInputStream(samplerate=SAMPLE_RATE, blocksize=FRAME_LEN,
+                              channels=1, dtype="int16", device=device)
+        s.start()
+        return s
+
+    stream = open_mic()
+    agc = AutoGain()
+    threshold = ambient_threshold(stream, agc)
+
+    if waker:
+        print(f"Listening. Say '{waker.name}' to talk. Ctrl+C to quit.")
+    else:
+        print("Press Enter to talk. Ctrl+C to quit.")
+
+    asleep = False
+    try:
+      while True:  # outer: survives the microphone vanishing mid-listen
+       try:
+        while True:
+            # --- wait for wake (and announce due timers) ---
+            set_state("asleep" if asleep else "standby")
+            if waker:
+                import timers_watch
+
+                woke = False
+                frames_seen = 0
+                while not woke:
+                    data, _ = stream.read(FRAME_LEN)
+                    pcm = agc.process(np.frombuffer(bytes(data), dtype=np.int16))
+                    woke = waker.process(pcm)
+                    frames_seen += 1
+                    if frames_seen % 12 == 0:  # roughly once a second
+                        import announce
+                        import agents
+
+                        agents.tick()  # Scout runs itself each morning
+                        for announcement in timers_watch.pop_due() + announce.pop():
+                            print(f"TARS: {announcement}")
+                            log("said", announcement)
+                            # remember it, so "open the file you just made" works
+                            brain.history.append(
+                                {"role": "assistant", "content": announcement})
+                            set_state("speaking")
+                            stream.stop()
+                            beep(988, 0.25)
+                            speaker.say(announcement)
+                            stream.start()
+                            set_state("standby")
+            else:
+                stream.stop()
+                input("\n[Enter] to talk: ")
+                stream.start()
+
+            beep()
+
+            # --- asleep: only "wake up" gets a reaction ---
+            if asleep:
+                audio = record_command(stream, threshold, agc)
+                if waker:
+                    waker.reset()
+                text = transcriber.transcribe(audio) if audio is not None else ""
+                if text and any(w in text.lower() for w in WAKE_UP_WORDS):
+                    asleep = False
+                    set_state("speaking")
+                    stream.stop()
+                    speaker.say("I'm back. What do you need?")
+                    stream.start()
+                continue
+
+            # --- conversation: keep listening until Jacob goes quiet ---
+            in_conversation = True
+            first_turn = True
+            convo: list[str] = []
+            while in_conversation:
+                set_state("listening")
+                wait = WAIT_FOR_SPEECH_SEC if first_turn else FOLLOWUP_SEC
+                audio = record_command(stream, threshold, agc, wait_sec=wait)
+                if waker:
+                    waker.reset()  # don't re-trigger on leftover audio
+                if audio is None:
+                    break  # silence — back to wake word
+
+                # mic is not read while we think/speak, so TARS can't hear itself
+                set_state("thinking")
+                text = transcriber.transcribe(audio)
+                if not text:
+                    break
+
+                # humanoid instinct: if the ears weren't sure, check first
+                if (transcriber.last_confidence < CONFIRM_BELOW
+                        and len(text.split()) >= 3):
+                    set_state("speaking")
+                    stream.stop()
+                    speaker.say(f"Did you say: {text}?")
+                    stream.start()
+                    set_state("listening")
+                    audio2 = record_command(stream, threshold, agc, wait_sec=6)
+                    reply2 = transcriber.transcribe(audio2) if audio2 is not None else ""
+                    if waker:
+                        waker.reset()
+                    low2 = reply2.lower()
+                    if not reply2 or low2.startswith(("yes", "yeah", "yep",
+                                                      "correct", "right")):
+                        pass  # silence or a yes — run with what was heard
+                    elif low2.startswith(("no", "nah")) and len(reply2.split()) <= 3:
+                        set_state("speaking")
+                        stream.stop()
+                        speaker.say("My mistake. Say it again?")
+                        stream.start()
+                        set_state("listening")
+                        audio3 = record_command(stream, threshold, agc, wait_sec=8)
+                        text = transcriber.transcribe(audio3) if audio3 is not None else ""
+                        if waker:
+                            waker.reset()
+                        if not text:
+                            break
+                    else:
+                        text = reply2  # he just said the corrected command
+
+                print(f"You: {text}")
+                log("heard", text)
+                convo.append(f"Jacob: {text}")
+
+                if any(w in text.lower() for w in SLEEP_WORDS):
+                    set_state("speaking")
+                    stream.stop()
+                    speaker.say("Going quiet. Say, hey TARS, wake up, when you need me.")
+                    stream.start()
+                    asleep = True
+                    break
+
+                if any(w in text.lower() for w in SHUTDOWN_WORDS):
+                    set_state("speaking")
+                    stream.stop()
+                    speaker.say("Powering down. Goodbye, Jacob.")
+                    log("said", "Powering down.")
+                    return
+
+                if any(w in text.lower() for w in END_WORDS):
+                    set_state("speaking")
+                    stream.stop()
+                    speaker.say("Righto.")
+                    stream.start()
+                    break
+
+                gen = brain.handle_stream(text)
+                try:
+                    first = next(gen)  # brain starts thinking here
+                except StopIteration:
+                    first = None
+                if first is None:
+                    break
+
+                set_state("speaking")
+                stream.stop()  # keep wake-word detection off while audio plays
+                import itertools
+
+                reply = speaker.say_stream(itertools.chain([first], gen))
+                print(f"TARS: {reply}")
+                log("said", reply)
+                convo.append(f"TARS: {reply}")
+                stream.start()
+                first_turn = False
+                beep(660, 0.07)  # soft blip: still listening for a follow-up
+
+            # conversation over — file topics and capture facts while idle
+            if len(convo) >= 2:
+                import topics
+
+                threading.Thread(
+                    target=topics.digest,
+                    args=(convo[:], datetime.date.today().isoformat()),
+                    daemon=True,
+                ).start()
+                threading.Thread(
+                    target=brain.capture_conversation, args=(convo[:],),
+                    daemon=True,
+                ).start()
+       except KeyboardInterrupt:
+        print("\nTARS shutting down.")
+        break
+       except sd.PortAudioError as e:
+        # Windows shuffled the audio devices (a controller/headset connected,
+        # driver restarted...) — reopen the mic instead of dying
+        print(f"(microphone lost: {e} — reconnecting)")
+        set_state("offline")
+        try:
+            stream.abort()
+            stream.close()
+        except Exception:
+            pass
+        while True:
+            time.sleep(4)
+            try:
+                sd._terminate()
+                sd._initialize()
+                stream = open_mic()
+                threshold = ambient_threshold(stream, agc)
+                print("(microphone back)")
+                break
+            except Exception:
+                set_state("offline")
+    finally:
+        set_state("offline")
+        try:
+            stream.stop()
+            stream.close()
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    main()
