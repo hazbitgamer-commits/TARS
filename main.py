@@ -44,7 +44,9 @@ END_WORDS = ("that's all", "thats all", "that is all", "that's it", "thats it",
 SLEEP_WORDS = ("go to sleep", "sleep mode", "go quiet")
 WAKE_UP_WORDS = ("wake up", "i'm back", "wakey")
 SHUTDOWN_WORDS = ("goodbye tars", "goodbye, tars", "shut down tars", "tars shut down",
-                  "shut yourself down", "power down")
+                  "shut yourself down", "power down", "close yourself",
+                  "turn yourself off", "close tars", "turn off tars",
+                  "quit tars", "exit tars", "power off")
 
 
 def vault_conversation_line(day: str, hhmm: str, kind: str, text: str) -> None:
@@ -163,18 +165,52 @@ def ensure_single_instance() -> None:
     import psutil
 
     me = os.getpid()
-    for p in psutil.process_iter(["pid", "name", "cmdline"]):
+    try:
+        procs = list(psutil.process_iter())
+    except Exception:
+        return  # scan unavailable — never let it block startup
+    for p in procs:
+        # every per-process read guarded: protected processes (anti-cheat,
+        # antivirus) throw raw OSErrors that once killed TARS at boot
         try:
-            if p.pid == me or not (p.info["name"] or "").lower().startswith("python"):
+            if p.pid == me or not (p.name() or "").lower().startswith("python"):
                 continue
-            args = [a.lower() for a in (p.info["cmdline"] or [])]
-            # exact argument match only — a script merely *mentioning* main.py
-            # (like a diagnostic command) must not count as a TARS instance
-            if any(a.endswith("main.py") for a in args) and any("tars" in a for a in args):
-                p.terminate()
+            mine, readable = False, True
+            try:
+                args = [a.lower() for a in (p.cmdline() or [])]
+                # exact argument match only — a script merely *mentioning*
+                # main.py (a diagnostic) must not count as a TARS instance
+                mine = any(a.endswith(("main.py", "boot.py")) for a in args) \
+                    and any("tars" in a for a in args)
+            except Exception:
+                readable = False
+            if not readable:
+                # unreadable command line = the wedged-zombie signature
+                # (one from 19:25 survived every polite sweep that way);
+                # if it runs from TARS's own runtime, it's a dead TARS.
+                # Healthy diagnostic scripts stay untouched — theirs read.
+                try:
+                    mine = "\\projects\\tars\\runtime\\" in (p.exe() or "").lower()
+                except Exception:
+                    mine = False
+            if mine:
+                p.kill()  # kill, not terminate — zombies ignore polite
                 print("(closed an older TARS instance)")
-        except psutil.Error:
+        except Exception:
             continue
+    # deterministic port takeover: whatever process holds the dashboard
+    # port and isn't me IS an old TARS, however unrecognizable — sweeps
+    # have missed zombies twice; socket ownership never lies
+    try:
+        for c in psutil.net_connections(kind="tcp"):
+            if getattr(c.laddr, "port", None) == 8765 and c.pid and c.pid != me:
+                try:
+                    psutil.Process(c.pid).kill()
+                    print("(killed the process squatting on the dashboard port)")
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
 
 def main() -> None:
@@ -194,15 +230,21 @@ def main() -> None:
     speaker = Speaker()
     transcriber = Transcriber()
     brain = Brain(BASE)
+    dashboard.BRAIN = brain  # the dashboard's "Teach TARS" box needs it
     import threading
 
     threading.Thread(target=brain.warm, daemon=True).start()
+    import tars_phone
+
+    tars_phone.start(brain)  # no-op until a Telegram token is in .env
     # after a healthy minute of uptime, this running set of core files is
     # proven bootable — snapshot it so boot.py can roll back a bad Kipp
     # self-upgrade that breaks start-up
     import improve
 
-    threading.Timer(60, improve.snapshot_last_good).start()
+    snapshot_timer = threading.Timer(60, improve.snapshot_last_good)
+    snapshot_timer.daemon = True  # never keep a dying TARS alive
+    snapshot_timer.start()
     from wakeword import make_wakeword
 
     waker = make_wakeword(BASE)
@@ -247,6 +289,11 @@ def main() -> None:
 
                         agents.tick()  # Scout runs itself each morning
                         improve.tick()  # Kipp self-improves whenever idle
+                        import game_watch
+                        import proactive
+
+                        game_watch.tick()  # session buddy + gaming flag
+                        proactive.tick()   # calendar heads-ups, rules-gated
                         for announcement in timers_watch.pop_due() + announce.pop():
                             print(f"TARS: {announcement}")
                             log("said", announcement)
@@ -334,6 +381,21 @@ def main() -> None:
                 log("heard", text)
                 convo.append(f"Jacob: {text}")
 
+                if any(w in text.lower() for w in ("goodnight", "good night")):
+                    # the nightly wrap-up: recap + tomorrow, then sleep
+                    set_state("speaking")
+                    stream.stop()
+                    try:
+                        wrap = brain.skills.run("nightly_wrap", {}) or ""
+                    except Exception:
+                        wrap = "Sleep well, Jacob."
+                    log("said", wrap)
+                    speaker.say(wrap + " Going quiet now — say, hey TARS, "
+                                "wake up, if you need me.")
+                    stream.start()
+                    asleep = True
+                    break
+
                 if any(w in text.lower() for w in SLEEP_WORDS):
                     set_state("speaking")
                     stream.stop()
@@ -347,7 +409,10 @@ def main() -> None:
                     stream.stop()
                     speaker.say("Powering down. Goodbye, Jacob.")
                     log("said", "Powering down.")
-                    return
+                    import os
+
+                    os._exit(0)  # invisible engine must ACTUALLY die —
+                    # a plain return once left a zombie with no console
 
                 if any(w in text.lower() for w in END_WORDS):
                     set_state("speaking")
@@ -356,13 +421,58 @@ def main() -> None:
                     stream.start()
                     break
 
+                # a quick "Right." / "On it." fills the routing silence, so
+                # Jacob knows he was heard instead of repeating the command
+                ack_thread = threading.Thread(target=speaker.ack, daemon=True)
+                ack_thread.start()
                 gen = brain.handle_stream(text)
                 try:
                     first = next(gen)  # brain starts thinking here
                 except StopIteration:
                     first = None
+                ack_thread.join(timeout=2)
                 if first is None:
                     break
+
+                # --- dictation mode: type everything until "stop dictation" ---
+                if first.startswith("__DICTATE__"):
+                    import pyautogui
+
+                    set_state("speaking")
+                    stream.stop()
+                    speaker.say("Dictation on. Click where the words should "
+                                "go — I'll type everything you say until you "
+                                "say stop dictation.")
+                    stream.start()
+                    set_state("listening")
+                    quiet_strikes = 0
+                    while True:
+                        audio_d = record_command(stream, threshold, agc,
+                                                 wait_sec=30)
+                        if waker:
+                            waker.reset()
+                        if audio_d is None:
+                            quiet_strikes += 1
+                            if quiet_strikes >= 2:  # a minute of silence: done
+                                break
+                            continue
+                        quiet_strikes = 0
+                        piece = transcriber.transcribe(audio_d)
+                        if not piece:
+                            continue
+                        low_d = piece.lower()
+                        if ("stop dictation" in low_d or "stop typing" in low_d
+                                or low_d.strip(".!, ") in ("stop", "stop it",
+                                                           "that's it")):
+                            break
+                        pyautogui.write(piece + " ", interval=0.02)
+                    set_state("speaking")
+                    stream.stop()
+                    speaker.say("Dictation off.")
+                    log("said", "(dictation session ended)")
+                    stream.start()
+                    set_state("listening")
+                    continue
 
                 set_state("speaking")
                 stream.stop()  # keep wake-word detection off while audio plays
@@ -407,6 +517,7 @@ def main() -> None:
             try:
                 sd._terminate()
                 sd._initialize()
+                audio_out.apply_saved()  # the reset wipes the output choice
                 stream = open_mic()
                 threshold = ambient_threshold(stream, agc)
                 print("(microphone back)")

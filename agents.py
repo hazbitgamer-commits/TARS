@@ -197,16 +197,9 @@ def run_curator(speak: bool = True) -> str:
 # ---------------- scheduler (called ~once a second from the standby loop) ----------------
 def tick() -> None:
     now = datetime.datetime.now()
-    scout_at = os.getenv("SCOUT_TIME", "07:30")
-    try:
-        hh, mm = (int(x) for x in scout_at.split(":"))
-    except ValueError:
-        hh, mm = 7, 30
     s = _state()
-    last = s.get("scout_ran", "")
-    if (now.hour, now.minute) >= (hh, mm) and not last.startswith(now.date().isoformat()):
-        _mark("scout_ran")  # claim it before the slow work
-        threading.Thread(target=run_scout, daemon=True).start()
+    # Scout's AUTOMATIC morning briefing removed at Jacob's request
+    # (2026-07-21) — "give me my morning briefing" still works on demand.
 
     # Curator sweeps whenever quarantine has contents, at most once a day
     quarantine = BASE / "vault_quarantine"

@@ -41,7 +41,10 @@ def _extract(lines: list[str], day: str) -> list[dict]:
             "instead of inventing a similar new one.\n"
             "Extract up to 3 real TOPICS discussed — things with substance "
             "(subjects, plans, problems, interests). SKIP greetings, small talk, "
-            "and routine commands (volume, screenshots, timers). Reply JSON:\n"
+            "routine commands (volume, screenshots, timers), and sessions of "
+            "OPERATING OR UPGRADING TARS ITSELF (testing its camera or brain "
+            "page, teaching it skills, GitHub uploads, memory cleanup) — those "
+            "are work chatter, not knowledge worth keeping. Reply JSON:\n"
             '{"topics": [{"title": "<2-4 word noun phrase>", '
             '"tags": ["<one-word>", ...], '
             '"summary": "<one sentence: what was discussed or decided>", '

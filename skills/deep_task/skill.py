@@ -79,7 +79,18 @@ def _worker(task: str) -> None:
                     result_text = message.result
             return result_text
 
-        result = anyio.run(go)
+        try:
+            result = anyio.run(go)
+        except Exception as first_err:
+            msg = str(first_err).lower()
+            if "129" in msg or "message reader" in msg:
+                # the claude CLI flakes with exit 129 sometimes — one retry
+                import time as _t
+
+                _t.sleep(10)
+                result = anyio.run(go)
+            else:
+                raise
         spoken = ""
         for line in reversed(result.splitlines()):
             if line.strip().startswith("SPOKEN:"):

@@ -22,6 +22,14 @@ ALIASES = {
     "excel": "excel", "spotify": "spotify:", "settings": "ms-settings:",
     "steam": "steam://open/main", "task manager": "taskmgr", "paint": "mspaint",
     "obsidian": "obsidian://", "discord": "discord:",
+    # WEB apps — not installed programs, they live at URLs (Jacob asked for
+    # "the FC web app" and got "nothing installed by that name")
+    "fc web app": "https://www.ea.com/ea-sports-fc/ultimate-team/web-app/",
+    "fut web app": "https://www.ea.com/ea-sports-fc/ultimate-team/web-app/",
+    "the web app": "https://www.ea.com/ea-sports-fc/ultimate-team/web-app/",
+    "companion app": "https://www.ea.com/ea-sports-fc/ultimate-team/web-app/",
+    "youtube": "https://www.youtube.com", "gmail": "https://mail.google.com",
+    "whatsapp web": "https://web.whatsapp.com",
 }
 
 SITE_WORDS = {" dot com": ".com", " dot net": ".net", " dot org": ".org", " dot au": ".au"}

@@ -28,7 +28,7 @@ def pop() -> list[str]:
     try:
         import quiet
 
-        quiet_now = quiet.is_active()
+        quiet_now = quiet.is_active()[0]  # (active, schedule-text) tuple!
     except Exception:
         quiet_now = False
     speak, held = [], []

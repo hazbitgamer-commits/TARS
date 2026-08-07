@@ -2,181 +2,535 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>TARS</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-:root{--bg:#070b12;--card:#0c141f;--line:#123049;--cy:#2bc9ff;--tx:#c9d6e2;--dim:#5b7183;--green:#2ecc71;--amber:#f1c40f;--blue:#3498db;--purple:#8e44ad;--red:#e74c3c;--grey:#7f8c8d}
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--tx);font:14px/1.55 "Segoe UI",system-ui,sans-serif;padding:26px;min-height:100vh}
-body::after{content:"";position:fixed;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,transparent 0 2px,rgba(255,255,255,.012) 2px 4px)}
-header{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1px solid var(--line);padding-bottom:16px}
-h1{font-size:30px;letter-spacing:14px;color:#eaf6ff;font-weight:300;text-shadow:0 0 18px rgba(43,201,255,.45)}
-.sub{display:flex;align-items:center;gap:8px;margin-top:6px;color:var(--dim);font-size:13px}
-.dot{width:10px;height:10px;border-radius:50%;background:var(--grey);box-shadow:0 0 10px currentColor;animation:pulse 2s infinite}
-@keyframes pulse{50%{opacity:.45}}
-#clock{font:300 34px/1 Consolas,monospace;color:#eaf6ff;text-shadow:0 0 14px rgba(43,201,255,.35)}
-#date{color:var(--dim);text-align:right;font-size:13px}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:16px;margin-top:22px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
-.card h2{font-size:11px;letter-spacing:3px;text-transform:uppercase;color:var(--cy);margin-bottom:12px}
-.big{font-size:17px}
-.dim{color:var(--dim)}
-.row{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:7px 0}
-input[type=range]{flex:1;accent-color:var(--cy);height:4px}
-.val{width:34px;text-align:right;font-family:Consolas,monospace;color:var(--cy)}
-.x{color:var(--dim);cursor:pointer;padding:0 5px;font-size:15px;line-height:1}
-.x:hover{color:var(--red)}
-.feed{font-family:Consolas,monospace;font-size:12px;max-height:230px;overflow-y:auto;display:flex;flex-direction:column;gap:5px}
-.feed .you{color:#7fe3a0}
-.feed .tars{color:var(--cy)}
-.feed time{color:var(--dim);margin-right:7px}
-.chip{display:inline-block;border:1px solid var(--line);border-radius:7px;padding:2px 9px;margin:3px 4px 3px 0;font-size:12px;color:var(--tx);cursor:default}
-.chip:hover{border-color:var(--cy);color:var(--cy)}
-a{color:var(--cy);text-decoration:none}
-a:hover{text-shadow:0 0 8px rgba(43,201,255,.6)}
-ul{list-style:none}
-li{margin:5px 0}
-.count{font:300 40px/1 Consolas,monospace;color:#eaf6ff;text-shadow:0 0 14px rgba(43,201,255,.35)}
-::-webkit-scrollbar{width:8px}
-::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+:root{
+  --bg:#04060c; --panel:rgba(13,20,33,.62); --panel-edge:rgba(90,140,200,.14);
+  --cyan:#46d4ff; --amber:#ffb340; --violet:#a78bfa; --green:#3ddc97; --red:#ff5d7a;
+  --txt:#d7e3f0; --dim:#5d7288; --faint:#3a4a5c;
+}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--txt);overflow:hidden;
+  font:14px/1.5 "Segoe UI Variable Display","Segoe UI",system-ui,sans-serif}
+#stars{position:fixed;inset:0;z-index:0}
+#vignette{position:fixed;inset:0;z-index:1;pointer-events:none;
+  background:radial-gradient(ellipse at 50% 30%,transparent 55%,rgba(0,0,0,.55) 100%)}
+#app{position:relative;z-index:2;height:100%;display:flex;flex-direction:column;
+  padding:18px 22px;gap:14px}
+
+/* ---------- header ---------- */
+header{display:flex;align-items:center;gap:22px;flex:0 0 auto}
+#wordmark{font-size:30px;font-weight:200;letter-spacing:16px;color:#eaf6ff;
+  background:linear-gradient(100deg,#eaf6ff 35%,var(--cyan) 50%,#eaf6ff 65%);
+  background-size:250% 100%;-webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:transparent;animation:shimmer 7s linear infinite}
+@keyframes shimmer{to{background-position:-250% 0}}
+#ring{width:46px;height:46px;border-radius:50%;position:relative;flex:0 0 auto}
+#ring::before{content:"";position:absolute;inset:0;border-radius:50%;
+  background:conic-gradient(from 0deg,var(--ring-c,#5d7288),transparent 65%);
+  animation:spin 2.6s linear infinite;
+  -webkit-mask:radial-gradient(circle,transparent 55%,#000 57%)}
+#ring::after{content:"";position:absolute;inset:12px;border-radius:50%;
+  background:var(--ring-c,#5d7288);opacity:.9;
+  box-shadow:0 0 18px var(--ring-c,#5d7288);animation:breathe 2.2s ease-in-out infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes breathe{50%{transform:scale(.78);opacity:.55}}
+#statusText{font-size:11px;letter-spacing:4px;color:var(--dim);text-transform:uppercase;margin-top:2px}
+#statusWord{font-size:17px;font-weight:300;letter-spacing:2px}
+#headRight{margin-left:auto;display:flex;align-items:center;gap:20px}
+#clock{font-size:34px;font-weight:100;letter-spacing:3px;color:#eaf6ff}
+#clock b{animation:blink 2s steps(1) infinite;font-weight:100}
+@keyframes blink{50%{opacity:.15}}
+#date{font-size:11px;letter-spacing:3px;color:var(--dim);text-align:right;text-transform:uppercase}
+#powerBtn{background:none;border:1px solid var(--panel-edge);color:var(--dim);
+  border-radius:10px;width:38px;height:38px;font-size:17px;cursor:pointer;transition:.25s}
+#powerBtn:hover{color:var(--red);border-color:var(--red);box-shadow:0 0 14px rgba(255,93,122,.35)}
+
+/* ---------- tabs ---------- */
+#tabs{display:flex;gap:8px;flex:0 0 auto;margin-top:-2px}
+.tabBtn{background:none;border:1px solid var(--panel-edge);color:var(--dim);
+  font:inherit;font-size:11px;letter-spacing:3px;text-transform:uppercase;
+  padding:8px 18px;border-radius:10px;cursor:pointer;transition:.25s}
+.tabBtn:hover{color:var(--txt);border-color:rgba(90,140,200,.3)}
+.tabBtn.active{color:var(--cyan);border-color:var(--cyan);box-shadow:0 0 14px rgba(70,212,255,.25)}
+.panel{display:none;flex:1;min-height:0;flex-direction:column}
+.panel.active{display:flex}
+
+/* ---------- layout ---------- */
+#grid{flex:1;display:grid;grid-template-columns:270px 1fr 270px;gap:14px;min-height:0}
+.col{display:flex;flex-direction:column;gap:14px;min-height:0;
+  overflow-y:auto;overflow-x:hidden;padding-right:3px;
+  scrollbar-width:thin;scrollbar-color:var(--faint) transparent}
+.col::-webkit-scrollbar{width:5px}
+.col::-webkit-scrollbar-thumb{background:var(--faint);border-radius:3px}
+.col::-webkit-scrollbar-track{background:transparent}
+.col .card{flex-shrink:0}
+.card{background:var(--panel);border:1px solid var(--panel-edge);border-radius:16px;
+  padding:14px 16px;backdrop-filter:blur(14px);box-shadow:0 12px 30px rgba(0,0,0,.35);
+  opacity:0;transform:translateY(14px);animation:reveal .7s cubic-bezier(.2,.7,.3,1) forwards}
+.card h3{font-size:10px;letter-spacing:4px;color:var(--dim);text-transform:uppercase;
+  margin-bottom:10px;font-weight:600}
+@keyframes reveal{to{opacity:1;transform:none}}
+.col .card:nth-child(2){animation-delay:.12s}.col .card:nth-child(3){animation-delay:.22s}
+.col .card:nth-child(4){animation-delay:.32s}
+
+/* weather */
+#temp{font-size:44px;font-weight:100;color:#eaf6ff}
+#temp span{font-size:18px;color:var(--dim)}
+#wdesc{color:var(--dim);font-size:12.5px;margin-top:2px}
+/* timers + lists */
+.rowitem{display:flex;justify-content:space-between;padding:5px 0;font-size:13px;
+  border-bottom:1px solid rgba(90,140,200,.07)}
+.rowitem:last-child{border-bottom:none}
+.rowitem .when{color:var(--amber)}
+.empty{color:var(--faint);font-size:12.5px;font-style:italic}
+
+/* map */
+#mapCard{flex:1.35;padding:0;overflow:hidden;position:relative;min-height:340px}
+#map{position:absolute;inset:0;background:#070b14}
+#mapLabel{position:absolute;top:12px;left:14px;z-index:500;font-size:11px;
+  letter-spacing:5px;color:#eaf6ff;background:rgba(5,9,16,.72);border:1px solid var(--panel-edge);
+  padding:7px 14px;border-radius:9px;backdrop-filter:blur(8px);transition:.4s}
+#mapHint{position:absolute;bottom:10px;left:14px;z-index:500;font-size:10px;color:var(--faint)}
+#streetView{position:absolute;inset:0;z-index:400;display:none;background:#070b14}
+#streetView iframe{width:100%;height:100%;border:0}
+.leaflet-control-attribution{background:rgba(5,9,16,.6)!important;color:#3a4a5c!important;font-size:9px!important}
+.leaflet-control-attribution a{color:#5d7288!important}
+.pin{width:16px;height:16px;border-radius:50%;background:var(--amber);
+  box-shadow:0 0 0 4px rgba(255,179,64,.25),0 0 16px var(--amber);animation:pinPulse 1.8s ease-out infinite}
+@keyframes pinPulse{0%{box-shadow:0 0 0 0 rgba(255,179,64,.45),0 0 16px var(--amber)}
+  100%{box-shadow:0 0 0 16px rgba(255,179,64,0),0 0 16px var(--amber)}}
+
+/* feed */
+#feedCard{flex:1;display:flex;flex-direction:column;min-height:180px}
+#feed{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding-right:6px;
+  scrollbar-width:thin;scrollbar-color:var(--faint) transparent}
+.msg{max-width:82%;padding:8px 13px;border-radius:14px;font-size:13px;line-height:1.45;
+  animation:slideIn .35s cubic-bezier(.2,.7,.3,1)}
+@keyframes slideIn{from{opacity:0;transform:translateY(10px)}}
+.msg.heard{align-self:flex-end;background:rgba(255,179,64,.10);border:1px solid rgba(255,179,64,.25);
+  border-bottom-right-radius:4px;color:#ffd9a0}
+.msg.said{align-self:flex-start;background:rgba(70,212,255,.08);border:1px solid rgba(70,212,255,.22);
+  border-bottom-left-radius:4px;color:#bfe9ff}
+
+/* sliders */
+.slider{margin-bottom:11px}
+.slider .lab{display:flex;justify-content:space-between;font-size:11.5px;color:var(--dim);
+  letter-spacing:1px;text-transform:capitalize;margin-bottom:4px}
+.slider .lab b{color:var(--cyan);font-weight:600}
+input[type=range]{width:100%;-webkit-appearance:none;height:4px;border-radius:3px;
+  background:linear-gradient(90deg,var(--cyan) var(--pct,50%),rgba(90,140,200,.18) var(--pct,50%));outline:none}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;
+  border-radius:50%;background:#eaf6ff;box-shadow:0 0 10px var(--cyan);cursor:pointer;transition:.2s}
+input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.25)}
+
+/* skills + kipp */
+#skillCount{font-size:38px;font-weight:100;color:#eaf6ff}
+#skillCount span{font-size:13px;color:var(--dim);letter-spacing:2px}
+.chip{display:inline-block;background:rgba(167,139,250,.10);border:1px solid rgba(167,139,250,.3);
+  color:#cdbcff;font-size:11px;border-radius:20px;padding:2px 10px;margin:2px 3px 0 0}
+#kipp div{font-size:11.5px;color:var(--dim);padding:4px 0;border-bottom:1px solid rgba(90,140,200,.07)}
+#kipp div:last-child{border-bottom:none}
+#kipp b{color:var(--green);font-weight:600}
+#learning div{font-size:11.5px;color:var(--dim);padding:4px 0;border-bottom:1px solid rgba(90,140,200,.07)}
+#learning div:last-child{border-bottom:none}
+#learning b{color:var(--cyan);font-weight:600}
+
+/* voice picker */
+#voiceGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));
+  gap:12px;overflow-y:auto}
+.voiceCard{background:var(--panel);border:1px solid var(--panel-edge);border-radius:14px;
+  padding:16px;cursor:pointer;transition:.2s;text-align:left}
+.voiceCard:hover{border-color:rgba(70,212,255,.4);transform:translateY(-2px)}
+.voiceCard.picked{border-color:var(--cyan);box-shadow:0 0 18px rgba(70,212,255,.3);
+  background:rgba(70,212,255,.07)}
+.voiceCard .vName{font-size:16px;color:#eaf6ff;font-weight:300;letter-spacing:1px}
+.voiceCard .vDesc{font-size:11.5px;color:var(--dim);margin-top:4px}
+.voiceCard .vTag{display:inline-block;margin-top:8px;font-size:9.5px;letter-spacing:2px;
+  color:var(--cyan);text-transform:uppercase;visibility:hidden}
+.voiceCard.picked .vTag{visibility:visible}
+#voiceStatus{font-size:11.5px;color:var(--dim);margin-bottom:12px}
+
+/* footer links */
+#links{display:flex;gap:10px}
+#links a{flex:1;text-align:center;text-decoration:none;color:var(--dim);font-size:11px;
+  letter-spacing:3px;padding:9px 0;border:1px solid var(--panel-edge);border-radius:11px;transition:.25s}
+#links a:hover{color:var(--cyan);border-color:var(--cyan);box-shadow:0 0 16px rgba(70,212,255,.25)}
 </style>
 </head>
 <body>
+<canvas id="stars"></canvas><div id="vignette"></div>
+<div id="app">
 <header>
+  <div id="ring"></div>
   <div>
-    <h1>TARS</h1>
-    <div class="sub"><span class="dot" id="statusDot"></span><span id="statusText">connecting…</span></div>
+    <div id="statusWord">Connecting</div>
+    <div id="statusText">— — —</div>
   </div>
-  <div>
-    <div id="clock">--:--</div>
-    <div id="date"></div>
+  <div id="wordmark">TARS</div>
+  <div id="headRight">
+    <div>
+      <div id="clock">--<b>:</b>--</div>
+      <div id="date"></div>
+    </div>
+    <button id="powerBtn" title="Shut TARS down completely">&#9211;</button>
   </div>
 </header>
 
-<div class="grid">
-  <div class="card"><h2>Today</h2>
-    <div class="big" id="weather"><span class="dim">fetching weather…</span></div>
-  </div>
-  <div class="card"><h2>Timers &amp; Reminders</h2><div id="timers" class="dim">None running.</div></div>
-  <div class="card"><h2>Personality</h2><div id="sliders"></div></div>
-  <div class="card"><h2>Activity</h2><div class="feed" id="feed"><span class="dim">Quiet so far.</span></div></div>
-  <div class="card"><h2>Skills</h2><div id="skills"></div></div>
-  <div class="card"><h2>Brain</h2>
-    <div class="row"><span class="count" id="noteCount">0</span><span class="dim">memories<br>in the vault</span></div>
-    <ul id="recentNotes"></ul>
-  </div>
-  <div class="card"><h2>Smart Home</h2><div class="dim">Not connected yet — coming in Phase 5.</div></div>
+<div id="tabs">
+  <button class="tabBtn active" data-tab="home">Dashboard</button>
+  <button class="tabBtn" data-tab="voice">Voice</button>
 </div>
 
+<div id="panel-home" class="panel active">
+<div id="grid">
+  <div class="col">
+    <div class="card"><h3>Weather — Perth</h3>
+      <div id="temp">--<span>°C</span></div><div id="wdesc">waiting on the sky…</div></div>
+    <div class="card"><h3>Timers</h3><div id="timers" class="empty">none running</div></div>
+    <div class="card"><h3>To-do</h3><div id="todo" class="empty">all clear</div></div>
+    <div class="card" style="flex:1"><h3>Shopping</h3><div id="shopping" class="empty">nothing needed</div></div>
+  </div>
+
+  <div class="col">
+    <div class="card" id="mapCard">
+      <div id="mapLabel">PERTH — HOME</div>
+      <div id="map"></div>
+      <div id="streetView"></div>
+      <div id="mapHint">say: “show London on the map” · “find cafes in Subiaco on the map” · “open street view of the Eiffel Tower”</div>
+    </div>
+    <div class="card" id="feedCard"><h3>Conversation</h3><div id="feed"></div></div>
+  </div>
+
+  <div class="col">
+    <div class="card"><h3>Personality</h3><div id="sliders"></div></div>
+    <div class="card"><h3>Abilities</h3>
+      <div id="skillCount">0 <span>SKILLS</span></div><div id="chips"></div></div>
+    <div class="card" style="flex:1"><h3>Learning — what's new</h3><div id="learning" class="empty">nothing new yet</div></div>
+    <div class="card"><h3>Teach TARS</h3>
+      <textarea id="teachBox" rows="3" placeholder="Type what TARS should teach himself — e.g. control my desk fan over wifi…"
+        style="width:100%;background:rgba(5,9,16,.55);border:1px solid var(--panel-edge);
+               border-radius:10px;color:var(--txt);padding:9px 11px;font:12.5px inherit;
+               resize:none;outline:none"></textarea>
+      <button id="teachBtn" style="margin-top:8px;width:100%;background:rgba(70,212,255,.10);
+        border:1px solid rgba(70,212,255,.35);color:var(--cyan);border-radius:10px;
+        padding:8px 0;font-size:12px;letter-spacing:2px;cursor:pointer;transition:.25s">TEACH</button>
+      <div id="teachNote" style="font-size:11px;color:var(--dim);margin-top:6px"></div></div>
+    <div class="card"><h3>Kipp proposes</h3><div id="proposals" class="empty">no ideas on the table</div></div>
+    <div class="card" style="flex:1"><h3>Kipp — self-improvement</h3><div id="kipp" class="empty">quiet so far</div></div>
+    <div class="card"><h3>Windows</h3><div id="links">
+      <a href="/brain">BRAIN</a><a href="/camera">CAMERA</a></div></div>
+  </div>
+</div>
+</div>
+
+<div id="panel-voice" class="panel">
+  <div class="card" style="flex:1;display:flex;flex-direction:column;min-height:0">
+    <h3>Voice — pick who TARS sounds like</h3>
+    <div id="voiceStatus">loading voices…</div>
+    <div id="voiceGrid"></div>
+  </div>
+</div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-const COLORS={standby:"var(--grey)",listening:"var(--green)",thinking:"var(--amber)",
-              speaking:"var(--blue)",asleep:"var(--purple)",offline:"var(--red)",starting:"var(--grey)"};
-const LABELS={standby:'Standby — say "Hey TARS"',listening:"Listening…",thinking:"Thinking…",
-              speaking:"Speaking…",asleep:"Asleep",offline:"Offline",starting:"Starting…"};
-let sliderNames="";
-let online=false;
-let lastSettings={};
-
-function setOnline(ok){
-  online=ok;
-  const box=document.getElementById("sliders");
-  box.style.opacity=ok?1:.35;
-  box.querySelectorAll("input").forEach(i=>i.disabled=!ok);
+/* ---------- starfield ---------- */
+const cv = document.getElementById("stars"), cx = cv.getContext("2d");
+let stars = [];
+function sizeStars(){
+  cv.width = innerWidth; cv.height = innerHeight;
+  stars = Array.from({length: 130}, () => ({
+    x: Math.random()*cv.width, y: Math.random()*cv.height,
+    r: Math.random()*1.3+.2, v: Math.random()*.08+.02, tw: Math.random()*Math.PI*2}));
 }
-
-function esc(s){const d=document.createElement("span");d.textContent=s;return d.innerHTML}
-
-function render(s){
-  const dot=document.getElementById("statusDot");
-  dot.style.background=COLORS[s.status]||"var(--grey)";
-  dot.style.color=dot.style.background;
-  document.getElementById("statusText").textContent=LABELS[s.status]||s.status;
-
-  document.getElementById("weather").innerHTML=s.weather?esc(s.weather):'<span class="dim">fetching weather…</span>';
-
-  const t=document.getElementById("timers");
-  if(!s.timers.length) t.innerHTML='<span class="dim">None running.</span>';
-  else t.innerHTML=s.timers.map(x=>{
-    const mins=Math.max(0,Math.round((new Date(x.due)-Date.now())/60000));
-    const when=mins<120?mins+" min":new Date(x.due).toLocaleTimeString([], {hour:"numeric",minute:"2-digit"});
-    return `<div class="row"><span>${esc(x.label||"timer")}</span><span class="val" style="width:auto">${when}</span></div>`;
-  }).join("");
-
-  const names=Object.keys(s.settings).join(",");
-  const box=document.getElementById("sliders");
-  if(names!==sliderNames){
-    sliderNames=names;
-    box.innerHTML=Object.entries(s.settings).map(([n,v])=>
-      `<div class="row"><span style="width:92px">${esc(n.replaceAll("_"," "))}</span>
-       <input type="range" min="0" max="100" value="${v}" data-name="${esc(n)}">
-       <span class="val">${v}</span>
-       <span class="x" data-name="${esc(n)}" title="Remove this setting">&times;</span></div>`).join("");
-    box.querySelectorAll(".x").forEach(x=>{
-      x.onclick=()=>{
-        if(!online) return;
-        if(confirm(`Remove the "${x.dataset.name.replaceAll("_"," ")}" setting? This can't be undone from here.`))
-          fetch("/api/settings",{method:"POST",
-            body:JSON.stringify({name:x.dataset.name,remove:true})}).then(tick);
-      };
-    });
-    box.querySelectorAll("input").forEach(inp=>{
-      inp.oninput=()=>{inp.nextElementSibling.textContent=inp.value};
-      inp.onchange=()=>{
-        fetch("/api/settings",{method:"POST",
-          body:JSON.stringify({name:inp.dataset.name,value:+inp.value})})
-        .catch(()=>{  // offline: snap back so it never lies
-          inp.value=lastSettings[inp.dataset.name];
-          inp.nextElementSibling.textContent=inp.value;
-        });
-      };
-    });
-  }else{
-    box.querySelectorAll("input").forEach(inp=>{
-      if(document.activeElement!==inp){inp.value=s.settings[inp.dataset.name];
-        inp.nextElementSibling.textContent=inp.value}
-    });
+sizeStars(); addEventListener("resize", sizeStars);
+(function drift(){
+  cx.clearRect(0,0,cv.width,cv.height);
+  for(const s of stars){
+    s.x -= s.v; if(s.x < -2) s.x = cv.width+2;
+    s.tw += .03;
+    cx.globalAlpha = .35 + Math.sin(s.tw)*.25;
+    cx.fillStyle = "#bcd8f0";
+    cx.beginPath(); cx.arc(s.x, s.y, s.r, 0, 7); cx.fill();
   }
+  requestAnimationFrame(drift);
+})();
 
-  const feed=document.getElementById("feed");
-  if(s.log.length){
-    feed.innerHTML=s.log.map(e=>{
-      const cls=e.kind==="heard"?"you":"tars";
-      const who=e.kind==="heard"?"YOU":"TARS";
-      return `<div class="${cls}"><time>${e.t.slice(11,16)}</time>${who}: ${esc(e.text)}</div>`;
-    }).join("");
-    feed.scrollTop=feed.scrollHeight;
-  }
-
-  document.getElementById("skills").innerHTML=s.skills.map(k=>
-    `<span class="chip" title="${esc(k.desc)} (added ${k.added})">${esc(k.name)}</span>`).join("");
-
-  document.getElementById("noteCount").textContent=s.brain.count;
-  document.getElementById("recentNotes").innerHTML=s.brain.recent.map(n=>
-    `<li><a href="${n.uri}">${esc(n.name)}</a></li>`).join("");
+/* ---------- clock ---------- */
+function tickClock(){
+  const n = new Date();
+  document.getElementById("clock").innerHTML =
+    String(n.getHours()).padStart(2,"0") + "<b>:</b>" + String(n.getMinutes()).padStart(2,"0");
+  document.getElementById("date").textContent =
+    n.toLocaleDateString("en-AU",{weekday:"long",day:"numeric",month:"long"});
 }
+tickClock(); setInterval(tickClock, 5000);
 
-async function tick(){
+/* ---------- status ring ---------- */
+const RING = {standby:"#5d7288", listening:"#3ddc97", thinking:"#ffb340",
+              speaking:"#46d4ff", asleep:"#a78bfa", offline:"#ff5d7a"};
+const WORD = {standby:"Standing by", listening:"Listening", thinking:"Thinking",
+              speaking:"Speaking", asleep:"Asleep", offline:"Offline"};
+
+/* ---------- map ---------- */
+let map, markerLayer, lastMapT = -1, svActive = false;
+try{
+  map = L.map("map",{zoomControl:false, attributionControl:true}).setView([-31.95,115.86],11);
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+    {attribution:"&copy; OSM &copy; CARTO", maxZoom:19}).addTo(map);
+  markerLayer = L.layerGroup().addTo(map);
+}catch(e){ document.getElementById("mapLabel").textContent = "MAP OFFLINE"; }
+async function pollMap(){
   try{
-    const r=await fetch("/api/state");
-    const s=await r.json();
-    lastSettings=s.settings;
-    render(s);
-    setOnline(true);
-  }catch(e){
-    document.getElementById("statusText").textContent="Offline — start TARS.bat, sliders are locked";
-    document.getElementById("statusDot").style.background="var(--red)";
-    setOnline(false);
+    const m = await (await fetch("/api/map")).json();
+    if(m.t !== lastMapT && map){
+      lastMapT = m.t;
+      if(!svActive) document.getElementById("mapLabel").textContent = m.label || "—";
+      map.flyTo(m.center, m.zoom, {duration: 2.2});
+      markerLayer.clearLayers();
+      (m.markers||[]).forEach((mk,i)=>setTimeout(()=>{
+        L.marker([mk.lat, mk.lon], {icon: L.divIcon({className:"", html:'<div class="pin"></div>',
+          iconSize:[16,16], iconAnchor:[8,8]})})
+         .addTo(markerLayer).bindPopup("<b>"+(mk.name||"")+"</b>");
+      }, 600+i*180));
+    }
+  }catch(e){}
+}
+setInterval(pollMap, 3000); pollMap();
+
+/* ---------- street view ---------- */
+let lastSVT = -1;
+async function pollStreetView(){
+  try{
+    const s = await (await fetch("/api/streetview")).json();
+    if(s.t !== lastSVT){
+      lastSVT = s.t;
+      const el = document.getElementById("streetView");
+      svActive = !!s.active;
+      if(s.active){
+        el.innerHTML = '<iframe src="https://maps.google.com/maps?layer=c&cbll='+
+          s.lat+','+s.lon+'&cbp=11,0,0,0,0&z=3&output=svembed" allowfullscreen></iframe>';
+        el.style.display = "block";
+        document.getElementById("mapLabel").textContent = s.label || "STREET VIEW";
+      }else{
+        el.style.display = "none";
+        el.innerHTML = "";
+      }
+    }
+  }catch(e){}
+}
+setInterval(pollStreetView, 3000); pollStreetView();
+
+/* ---------- live state ---------- */
+const esc = t => t.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let feedLen = -1, slidersBuilt = false;
+async function poll(){
+  let s;
+  try{ s = await (await fetch("/api/state")).json(); }
+  catch(e){ setStatus("offline"); return; }
+  setStatus(s.status || "standby");
+
+  const wm = (s.weather||"").match(/(-?\d+)\s*degrees?\s*and\s*([^.]+)/i);
+  if(wm){ document.getElementById("temp").innerHTML = wm[1] + "<span>°C</span>";
+          document.getElementById("wdesc").textContent = wm[2].trim(); }
+
+  const tEl = document.getElementById("timers");
+  if((s.timers||[]).length){
+    tEl.className=""; tEl.innerHTML = s.timers.map(t =>
+      `<div class="rowitem"><span>${esc(t.label||"timer")}</span><span class="when">${esc((t.due||"").slice(11,16))}</span></div>`).join("");
+  } else { tEl.className="empty"; tEl.textContent = "none running"; }
+
+  const log = s.log || [];
+  if(log.length !== feedLen){
+    feedLen = log.length;
+    const feed = document.getElementById("feed");
+    feed.innerHTML = log.slice(-14).map(e =>
+      `<div class="msg ${e.kind==="heard"?"heard":"said"}">${esc(e.text||"")}</div>`).join("");
+    feed.scrollTop = feed.scrollHeight;
+  }
+
+  const box = document.getElementById("sliders");
+  const settings = s.settings || {};
+  if(!slidersBuilt && Object.keys(settings).length){
+    slidersBuilt = true;
+    box.innerHTML = Object.entries(settings).map(([k,v]) =>
+      `<div class="slider"><div class="lab"><span>${esc(k)}</span><b id="v_${esc(k)}">${v}</b></div>
+       <input type="range" min="0" max="100" value="${v}" data-k="${esc(k)}"
+        style="--pct:${v}%"></div>`).join("");
+    box.querySelectorAll("input").forEach(inp => inp.oninput = () => {
+      inp.style.setProperty("--pct", inp.value + "%");
+      document.getElementById("v_" + inp.dataset.k).textContent = inp.value;
+      fetch("/api/settings",{method:"POST",
+        body: JSON.stringify({name: inp.dataset.k, value: +inp.value})});
+    });
+  } else if(slidersBuilt){
+    for(const [k,v] of Object.entries(settings)){
+      const el = document.querySelector(`input[data-k="${k}"]`);
+      if(el && document.activeElement !== el){
+        el.value = v; el.style.setProperty("--pct", v + "%");
+        const vv = document.getElementById("v_"+k); if(vv) vv.textContent = v;
+      }
+    }
   }
 }
-function clock(){
-  const now=new Date();
-  document.getElementById("clock").textContent=
-    now.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"});
-  document.getElementById("date").textContent=
-    now.toLocaleDateString([], {weekday:"long",day:"numeric",month:"long",year:"numeric"});
+function setStatus(st){
+  document.documentElement.style.setProperty("--ring-c", RING[st] || RING.standby);
+  document.getElementById("ring").style.setProperty("--ring-c", RING[st] || RING.standby);
+  document.getElementById("statusWord").textContent = WORD[st] || st;
+  document.getElementById("statusText").textContent = st === "listening" ? "say it, jacob" :
+    st === "offline" ? "engine not answering" : 'say "hey tars"';
 }
-setInterval(tick,2000); tick();
-setInterval(clock,1000); clock();
+setInterval(poll, 2000); poll();
+
+/* ---------- extras: lists + kipp ---------- */
+async function pollExtras(){
+  try{
+    const x = await (await fetch("/api/extras")).json();
+    for(const [id, key] of [["todo","todo"],["shopping","shopping"]]){
+      const el = document.getElementById(id), items = (x.lists||{})[key] || [];
+      if(items.length){ el.className=""; el.innerHTML = items.slice(0,6).map(i =>
+        `<div class="rowitem"><span>${esc(i)}</span></div>`).join("");
+      } else { el.className = "empty"; el.textContent = id==="todo" ? "all clear" : "nothing needed"; }
+    }
+    const k = document.getElementById("kipp");
+    if((x.kipp||[]).length){
+      k.className = ""; k.innerHTML = x.kipp.map(l => {
+        const done = l.startsWith("DONE");
+        return `<div><b>${done ? "✔" : "…"}</b> ${esc(l.replace(/^(DONE: |PROPOSED [^:]*: )/,"").split(" — ")[0]).slice(0,60)}</div>`;
+      }).join("");
+    }
+    const lrn = document.getElementById("learning");
+    if((x.learning||[]).length){
+      lrn.className = ""; lrn.innerHTML = x.learning.map((sk,i) =>
+        `<div><b>${i===0?"LATEST":"•"}</b> ${esc(sk.name)} <span style="color:var(--dim)">— ${esc(sk.desc).slice(0,70)}${esc(sk.desc).length>70?"…":""} (${esc(sk.added)})</span></div>`
+      ).join("");
+    }
+    // skills count via catalog names in state? use chips endpoint-free: leave to state
+  }catch(e){}
+}
+setInterval(pollExtras, 10000); pollExtras();
+
+/* ---------- skills count (from /api/state skills if present, else count via extras) ---------- */
+async function pollSkills(){
+  try{
+    const s = await (await fetch("/api/state")).json();
+    const names = (s.skills || []).map(x => typeof x === "string" ? x : x.skill);
+    if(names.length){
+      document.getElementById("skillCount").innerHTML = names.length + " <span>SKILLS</span>";
+      document.getElementById("chips").innerHTML =
+        names.slice(-6).map(n => `<span class="chip">${esc(n)}</span>`).join("");
+    }
+  }catch(e){}
+}
+setInterval(pollSkills, 30000); pollSkills();
+
+/* ---------- tabs ---------- */
+document.querySelectorAll(".tabBtn").forEach(btn => btn.onclick = () => {
+  document.querySelectorAll(".tabBtn").forEach(b => b.classList.remove("active"));
+  document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+  btn.classList.add("active");
+  document.getElementById("panel-" + btn.dataset.tab).classList.add("active");
+  if(btn.dataset.tab === "voice") loadVoices();
+});
+
+/* ---------- voice picker ---------- */
+let voicesLoaded = false;
+async function loadVoices(){
+  const statusEl = document.getElementById("voiceStatus");
+  const grid = document.getElementById("voiceGrid");
+  try{
+    const v = await (await fetch("/api/voices")).json();
+    grid.innerHTML = (v.voices||[]).map(voice => `
+      <div class="voiceCard ${voice.id===v.current?"picked":""}" data-id="${esc(voice.id)}">
+        <div class="vName">${esc(voice.name)}</div>
+        <div class="vDesc">${esc(voice.desc||"")}</div>
+        <div class="vTag">Speaking now</div>
+      </div>`).join("");
+    statusEl.textContent = "click a voice to make TARS speak like that from now on";
+    grid.querySelectorAll(".voiceCard").forEach(card => card.onclick = () => pickVoice(card.dataset.id));
+    voicesLoaded = true;
+  }catch(e){
+    statusEl.textContent = "couldn't load voices — is TARS running?";
+  }
+}
+async function pickVoice(id){
+  const statusEl = document.getElementById("voiceStatus");
+  statusEl.textContent = "switching voice…";
+  try{
+    const res = await (await fetch("/api/voice",{method:"POST",
+      body: JSON.stringify({id})})).json();
+    if(res.ok){
+      document.querySelectorAll(".voiceCard").forEach(c =>
+        c.classList.toggle("picked", c.dataset.id === id));
+      statusEl.textContent = "done — TARS will use this voice next time he speaks";
+    } else {
+      statusEl.textContent = "that voice wasn't recognised";
+    }
+  }catch(e){
+    statusEl.textContent = "couldn't reach TARS to change the voice";
+  }
+}
+
+/* ---------- Kipp's proposals: Build / Ignore ---------- */
+async function pollProposals(){
+  try{
+    const d = await (await fetch("/api/proposals")).json();
+    const offered = (d.proposals||[]).filter(p => p.status === "offered" || p.status === "building");
+    const box = document.getElementById("proposals");
+    if(!offered.length){ box.className = "empty"; box.textContent = "no ideas on the table"; return; }
+    box.className = "";
+    box.innerHTML = offered.map(p => `
+      <div style="padding:7px 0;border-bottom:1px solid rgba(90,140,200,.07)">
+        <div style="font-size:12.5px;color:#eaf6ff">${esc(p.title)}</div>
+        <div style="font-size:11px;color:var(--dim);margin:3px 0 6px">${esc(p.why||"")}</div>
+        ${p.status === "building"
+          ? '<div style="font-size:10.5px;color:var(--amber);letter-spacing:2px">BUILDING…</div>'
+          : `<button data-t="${esc(p.title)}" data-d="build" style="background:rgba(61,220,151,.12);
+               border:1px solid rgba(61,220,151,.4);color:var(--green);border-radius:8px;
+               padding:4px 14px;font-size:10.5px;letter-spacing:2px;cursor:pointer;margin-right:6px">BUILD</button>
+             <button data-t="${esc(p.title)}" data-d="ignore" style="background:none;
+               border:1px solid var(--panel-edge);color:var(--dim);border-radius:8px;
+               padding:4px 14px;font-size:10.5px;letter-spacing:2px;cursor:pointer">IGNORE</button>`}
+      </div>`).join("");
+    box.querySelectorAll("button").forEach(b => b.onclick = async () => {
+      b.disabled = true;
+      await fetch("/api/proposals",{method:"POST",
+        body: JSON.stringify({title: b.dataset.t, decision: b.dataset.d})});
+      pollProposals();
+    });
+  }catch(e){}
+}
+setInterval(pollProposals, 20000); pollProposals();
+
+/* ---------- teach box ---------- */
+const teachBtn = document.getElementById("teachBtn"),
+      teachBox = document.getElementById("teachBox"),
+      teachNote = document.getElementById("teachNote");
+teachBtn.onclick = async () => {
+  const request = teachBox.value.trim();
+  if(!request){ teachNote.textContent = "type something first"; return; }
+  teachBtn.disabled = true; teachNote.textContent = "sending to the big brain…";
+  try{
+    const r = await fetch("/api/learn",{method:"POST", body: JSON.stringify({request})});
+    if(r.ok){ teachNote.textContent = "✔ learning started — TARS will announce when he's got it";
+              teachBox.value = ""; }
+    else teachNote.textContent = "engine said no — is TARS fully started?";
+  }catch(e){ teachNote.textContent = "couldn't reach the engine"; }
+  teachBtn.disabled = false;
+};
+
+/* ---------- power ---------- */
+document.getElementById("powerBtn").onclick = () => {
+  if(!confirm("Shut TARS down completely? He stops listening until you open him again.")) return;
+  fetch("/api/shutdown",{method:"POST"}).finally(()=>{
+    document.getElementById("app").innerHTML =
+      '<div style="margin-top:38vh;text-align:center;font-weight:200;font-size:26px;letter-spacing:10px;color:#5d7288">TARS IS OFF</div>';
+    setTimeout(()=>window.close(), 1800);
+  });
+};
 </script>
 </body>
 </html>

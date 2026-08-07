@@ -54,6 +54,33 @@ class StatusUI:
         canvas.bind("<Button-1>", press)
         canvas.bind("<B1-Motion>", drag)
 
+        # right-click the pill = the always-available off switch (Jacob:
+        # "i don't know how to close tars")
+        menu = tk.Menu(root, tearoff=0, bg="#101418", fg="#e8e8e8",
+                       activebackground="#22303f", activeforeground="#ffffff",
+                       bd=0)
+
+        def open_dashboard():
+            try:
+                import tars_window
+
+                tars_window.open_page("")
+            except Exception:
+                pass
+
+        def shutdown():
+            import os
+
+            canvas.itemconfig(dot, fill="#e74c3c")
+            canvas.itemconfig(label, text="Powering down…")
+            root.update()
+            root.after(400, lambda: os._exit(0))
+
+        menu.add_command(label="Open TARS window", command=open_dashboard)
+        menu.add_separator()
+        menu.add_command(label="Shut TARS down completely", command=shutdown)
+        canvas.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
+
         def poll():
             try:
                 while True:

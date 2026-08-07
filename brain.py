@@ -3,7 +3,9 @@
 Later phases add: intent routing, skills, Claude escalation for hard tasks.
 """
 import datetime
+import difflib
 import json
+import re
 import subprocess
 import threading
 import time
@@ -26,6 +28,9 @@ class Brain:
         self.history: list[dict] = []
         self.pending_delete: str | None = None
         self.pending_learn: str | None = None
+        self.pending_clarify: str | None = None  # a vague self-teach ask
+        # awaiting one concrete example before proposing to teach it
+        self.recent_learns: list[tuple[float, str]] = []  # (t, normalized request)
         self.pending_quiet: tuple[float, str, dict] | None = None  # (t, skill, args)
         from skills_engine import SkillBox
 
@@ -40,9 +45,20 @@ class Brain:
         skills_dir = self.base / "skills"
         runtime_py = self.base / "runtime" / "python.exe"
         example = (skills_dir / "volume" / "skill.py").read_text(encoding="utf-8")
+        existing = "\n".join(
+            f"- {s['skill']}: {s['description']}" for s in self.skills.catalog())
         return (
-            f"TEACH YOURSELF A NEW SKILL. Jacob asked TARS: {request!r} and no "
-            f"existing skill covers it.\n"
+            f"TEACH YOURSELF A NEW SKILL. Jacob asked TARS: {request!r}.\n"
+            f"FIRST, check it against TARS's existing skills below — Jacob has "
+            f"gone in circles before from TARS creating overlapping skills for "
+            f"jobs an existing one already covered (e.g. a new 'github_upload' "
+            f"skill when 'github_publish' already existed). If one of these "
+            f"already does this job (even under a different name, e.g. a "
+            f"'brightness' skill covers 'dim my screen'), STOP: don't create "
+            f"anything, and instead make SPOKEN say which existing skill "
+            f"already covers it and the phrase Jacob should use. Only proceed "
+            f"past this point if the request is genuinely new.\n"
+            f"Existing skills:\n{existing}\n"
             f"Create a new folder {skills_dir}\\<short_snake_name>\\ containing "
             f"skill.py and skill.md. skill.py MUST define: DESCRIPTION (one-line "
             f"string for the intent router), ARGS (dict of argument name -> "
@@ -79,19 +95,24 @@ class Brain:
         """All routing/gates/skills. Returns None when it's conversation."""
         lowered = text.lower()
 
-        # a deletion is waiting on Jacob's yes/no
+        # a confirmation is waiting on Jacob's yes/no (deletion or big move)
         if self.pending_delete:
             target = self.pending_delete
             self.pending_delete = None  # one shot — anything but yes cancels
             if lowered.strip().startswith(("yes", "yeah", "yep", "confirm")):
-                result = self.skills.run(
-                    "delete_files", {"target": target, "confirmed": "true"})
+                if isinstance(target, tuple):  # (skill, args) generic confirm
+                    result = self.skills.run(target[0], target[1])
+                    skill_name = target[0]
+                else:
+                    result = self.skills.run(
+                        "delete_files", {"target": target, "confirmed": "true"})
+                    skill_name = "delete_files"
                 self.history += [{"role": "user", "content": text},
                                  {"role": "assistant", "content": result}]
-                self._journal(f"delete_files (confirmed): {result[:100]}")
+                self._journal(f"{skill_name} (confirmed): {result[:100]}")
                 return result
             if lowered.strip().startswith(("no", "nah", "cancel", "don't", "dont")):
-                return "Cancelled. Nothing deleted."
+                return "Cancelled. Nothing touched."
             # otherwise treat it as a normal command; the pending delete is dropped
 
         # bare "override quiet hours" re-runs whatever quiet hours just blocked.
@@ -113,6 +134,28 @@ class Brain:
                                  {"role": "assistant", "content": result}]
                 self._journal(f"{name} (override): {result[:100]}")
                 return result
+
+        # a vague self-teach ask was held for one concrete example — "add a
+        # voice selection unit to your dashboard" or "sell and buy items on
+        # FC26" gave the learning task nothing to aim at, so it guessed and
+        # Jacob had to re-teach it; asking for an example up front fixes the
+        # guess before any work starts
+        if self.pending_clarify:
+            original = self.pending_clarify
+            self.pending_clarify = None
+            if lowered.strip().startswith(("no", "nah", "cancel", "never mind",
+                                           "nevermind")):
+                return "Fair enough, skipping it."
+            if len(text.strip()) >= 4:
+                clarified = f"{original} — for example: {text.strip()}"
+                self.pending_learn = clarified
+                reply = (f"Got it — want me to teach myself to {clarified}? "
+                         f"Say yes and I'll get to work.")
+                self.history += [{"role": "user", "content": text},
+                                 {"role": "assistant", "content": reply}]
+                return reply
+            # too short to be a real example — fall through and handle this
+            # as a fresh command instead
 
         # a proposed self-teaching is waiting on Jacob's yes/no
         if self.pending_learn:
@@ -149,6 +192,18 @@ class Brain:
                 name = "new_skill"
                 route["args"] = {"request": text}
 
+        # "learn how to X" / "teach yourself X" is ALWAYS a self-teaching
+        # request — mentioning a device (camera...) or Kipp's self-improvement
+        # in the request must not trigger that skill instead. Sits BEFORE the
+        # new_skill branch so the redirect gets the full proposal flow.
+        if any(p in lowered for p in ("learn how", "learn to", "teach yourself",
+                                      "teach yourselves", "teach you to")) and \
+                name in ("camera", "camera_feed", "open_app", "browser_search",
+                         "look_at_screen", "face_who", "face_learn",
+                         "improve", "agents"):
+            name = "new_skill"
+            route["args"] = {"request": text}
+
         if name == "misheard":
             reply = f"I think I misheard you — I got: {text}. One more time?"
             self.history += [{"role": "user", "content": text},
@@ -160,19 +215,38 @@ class Brain:
             # Jacob went in circles (2026-07-19): the router kept proposing
             # brand-new skills for jobs an EXISTING skill already covered —
             # five overlapping GitHub skills in one morning. Rescue layers:
+            explicit_learn = any(p in req_low for p in
+                                 ("teach yourself", "teach yourselves",
+                                  "learn how", "learn to"))
             covered = None
-            if any(w in req_low for w in ("upload", "publish", "push")) and \
+            mem_words = ("remember", "don't forget", "dont forget",
+                         "keep in mind", "note that", "so you know",
+                         "for future reference")
+            if any(w in req_low for w in mem_words):
+                covered = None  # memory words win — handled below, WITH the fact
+            elif any(w in req_low for w in ("upload", "publish", "push")) and \
                     any(w in req_low for w in ("github", "repo", "repository")):
                 covered = ("github_file" if "github_file" in real and any(
                     w in req_low for w in (".py", ".txt", "file "))
                     else "github_publish")
-            else:
+            elif "open_app" in real and "app" in req_low and any(
+                    v in req_low for v in ("open", "launch", "start")) and any(
+                    w in req_low for w in ("resembl", "similar",
+                                           "search my pc", "search my computer")):
+                # "if I say it opens an app, e.g. Obsidian, search my PC for
+                # something resembling it and open it" IS open_app's fuzzy
+                # matching (it already searches for ANY app, not just the one
+                # named as the example) — teaching this again for the next
+                # example app would just duplicate a skill Jacob already has
+                covered = "open_app"
+            elif not explicit_learn:
+                # a skill literally NAMED in the request covers it — but only
+                # for direct commands; "learn how to zoom in camera mode"
+                # mentions the camera skill without being covered by it
                 named = [s for s in real if s != "deep_task"
                          and s.replace("_", " ") in req_low]
                 if named:
                     covered = max(named, key=len)
-            explicit_learn = any(p in req_low for p in
-                                 ("teach yourself", "learn how", "learn to"))
             if covered in real:
                 if explicit_learn:
                     return (f"I already know how — that's my "
@@ -181,21 +255,51 @@ class Brain:
                 name = covered
                 route["args"] = {}
             else:
-                # questions and trailed-off speech are conversation, never
-                # skill proposals ("Good, but how long until you're done?")
-                first_words = [w.strip(",.?!") for w in req_low.split()[:5]]
-                if ("?" in request or request.rstrip().endswith("...")
-                        or any(w in ("how", "what", "why", "when", "who",
-                                     "can", "could", "does", "is", "are",
-                                     "should") for w in first_words)):
+                # FACTS are for remembering, ABILITIES are for learning —
+                # "my gate code is 4321" must never become a teach-myself
+                # proposal. Explicit memory words go straight to the vault;
+                # plain statements about Jacob's life (no "you/yourself"
+                # asking TARS to act) are conversation, where auto-capture
+                # already stores whatever is durable.
+                mem_words = ("remember", "don't forget", "dont forget",
+                             "keep in mind", "note that", "so you know",
+                             "for future reference")
+                if any(w in req_low for w in mem_words):
+                    name = "remember"
+                    route["args"] = {"fact": request}
+                elif not explicit_learn:
+                    # only an explicit "teach yourself"/"learn how"/"learn to"
+                    # is a real ask for a new skill — everything else here is
+                    # a statement or a rephrasing of something already said
+                    # ("Jacob made you" / "only refer to me as..." both got a
+                    # nonsense teach-myself proposal before this check existed)
                     name = "chat"
                 else:
                     # mishearings kept triggering expensive learning runs —
-                    # confirm first
-                    self.pending_learn = request
-                    reply = (f"I don't have a skill for that. Want me to "
-                             f"teach myself to {request}? Say yes and I'll "
-                             f"get to work.")
+                    # confirm first. And re-saying the same request while it's
+                    # still awaiting an answer (or right after) shouldn't get
+                    # the exact same "I don't have a skill" prompt again —
+                    # that just reads as TARS not having heard the first time.
+                    now = time.time()
+                    norm_request = req_low.strip(" .!?")
+                    self.recent_learns = [(t, r) for t, r in self.recent_learns
+                                          if now - t < 1800]
+                    already_asked = any(r == norm_request
+                                        for _, r in self.recent_learns)
+                    self.recent_learns.append((now, norm_request))
+                    if already_asked:
+                        self.pending_learn = request
+                        reply = (f"Still on that same one — teach myself to "
+                                 f"{request}? Just say yes.")
+                    else:
+                        # a vague ask ("add a voice selection unit to your
+                        # dashboard") gives the learning task nothing concrete
+                        # to build — get one real example first so the guess
+                        # is right and Jacob isn't asked to re-teach it
+                        self.pending_clarify = request
+                        reply = (f"I don't have a skill for that. Give me one "
+                                 f"specific example of what you'd say or want "
+                                 f"done, and I'll teach myself to handle it.")
                     self.history += [{"role": "user", "content": text},
                                      {"role": "assistant", "content": reply}]
                     return reply
@@ -203,17 +307,82 @@ class Brain:
         # said — the router alone has let garbled speech through before
         if name == "run_command" and "run " not in lowered and "command" not in lowered:
             name = "chat"
+        # "open <app>" belongs to open_app — rival skills (music grabbed
+        # "Open Spotify") only keep it with a clear signal of their own
+        if lowered.startswith(("open ", "launch ", "start ")) and \
+                name in ("music", "notes_box") and \
+                not any(w in lowered for w in ("note", "paste", "play",
+                                               "song", "game")):
+            name = "open_app"
+            route["args"] = {}
+        # switching TARS's own output device must never fall to chat — chat
+        # once bluffed "I'm now speaking through your monitor" while the
+        # audio stayed on headphones. Nest-speaker rooms are excluded.
+        if (("output device" in lowered or "audio output" in lowered
+                or "speak through" in lowered or "voice through" in lowered
+                or ("output" in lowered and any(d in lowered for d in
+                    ("monitor", "headphone", "headset", "quest", "screen"))))
+                and not any(w in lowered for w in
+                            ("kitchen", "bedroom", "announce", "nest"))
+                and name != "voice_output"):
+            target = next((d for d in ("monitor", "headphone", "headset",
+                                       "quest", "screen") if d in lowered),
+                          "list")
+            name = "voice_output"
+            route["args"] = {"target": "headphones" if target == "headphone"
+                             else target}
+        # the goodnight report has fixed phrases (bare "goodnight" is
+        # handled by main.py directly, wrap-up + sleep)
+        if any(p in lowered for p in ("goodnight report", "good night report",
+                                      "wrap up my day", "nightly wrap")):
+            name = "nightly_wrap"
+            route["args"] = {}
+        # "what song is this" must never fall to chat — chat can't hear the
+        # speakers and would have to bluff an answer
+        if any(p in lowered for p in ("what song", "what's playing",
+                                      "whats playing", "what is playing",
+                                      "name this song")):
+            name = "music"
+            route["args"] = {"action": "whats_playing"}
+        # the router keeps inventing arg keys for open_app ({"app": ...},
+        # {"name": ...}) — the skill only reads "target", so "Open Obsidian"
+        # became "Open what, exactly?". Normalize, or pull it from the words.
+        if name == "open_app":
+            args = route.get("args") or {}
+            target = str(args.get("target") or args.get("name")
+                         or args.get("app") or "").strip()
+            if not target:
+                target = re.sub(r"^(please\s+)?(open|launch|start)\s+", "",
+                                lowered).strip(" .!?")
+                target = re.sub(r"^(up\s+|the\s+|my\s+)", "", target)
+            route["args"] = {"target": target}
         if name == "type_text" and "type" not in lowered:
             name = "chat"
-        # "learn how to X" / "teach yourself X" is ALWAYS a self-teaching
-        # request — mentioning a device (camera, screen...) in the request must
-        # not open that device instead
-        if any(p in lowered for p in ("learn how", "learn to", "teach yourself",
-                                      "teach you to")) and \
-                name in ("camera", "camera_feed", "open_app", "browser_search",
-                         "look_at_screen", "face_who", "face_learn"):
-            name = "new_skill"
-            route["args"] = {"request": text}
+        # a CHAIN of screen actions (click X, type Y, find Z...) must run as
+        # one screen_task job, not just its first click
+        if name in ("click_screen", "type_text", "keyboard",
+                    "browser_search") and (
+                " then " in lowered
+                or sum(v in lowered for v in ("click", "type", "find",
+                                              "search", "press", "choose",
+                                              "pick")) >= 3):
+            name = "screen_task"
+            route["args"] = {"instruction": text}
+        # chat must NEVER narrate action chains ("copy this, paste it there,
+        # click enter") — it once announced its own bluff as "a placeholder
+        # action". Two-plus concrete PC verbs = a job, not a conversation.
+        if name == "chat" and sum(
+                v in lowered for v in ("click", "paste", "copy", "type",
+                                       "press", "scroll")) >= 2:
+            name = "screen_task"
+            route["args"] = {"instruction": text}
+        # continuous dictation beats one-shot typing when Jacob asks for it
+        if name in ("type_text", "keyboard", "chat") and any(
+                w in lowered for w in ("dictation", "dictate",
+                                       "type what i say",
+                                       "type everything i say")):
+            name = "dictation"
+            route["args"] = {}
         # the webcam only ever activates when Jacob names it (his rule);
         # face skills count as explicit — they only make sense about someone
         # visibly in front of the lens
@@ -252,9 +421,18 @@ class Brain:
             except Exception as e:
                 return f"That skill misfired: {e}"
             if result is not None:
-                if result.startswith("__CONFIRM__"):  # delete_files wants a yes
+                if result.startswith("__CONFIRM__"):  # a skill wants a yes
                     _, target, message = result.split("__", 3)[1:]
-                    self.pending_delete = target
+                    if target.startswith("organize:"):  # big file move
+                        what, source, dest = target[9:].split("|", 2)
+                        self.pending_delete = ("organize", {
+                            "what": what, "source": source, "dest": dest,
+                            "confirmed": "true"})
+                    elif target == "open_dashboard":  # repeat-open guard
+                        self.pending_delete = ("open_dashboard",
+                                               {"confirmed": "true"})
+                    else:  # delete_files' original path-based confirm
+                        self.pending_delete = target
                     result = message
                 if result.startswith("Quiet hours"):  # remember what got blocked
                     self.pending_quiet = (time.time(), name,
@@ -298,7 +476,20 @@ class Brain:
     SELF_TERMS = ("tars", "assistant", "obsidian", "brain", "skill", "vault",
                   "dashboard", "graph", "camera", "webcam", "feed", "screen",
                   "microphone", "speaker", "voice", "model", "neuron", "memory",
-                  "3d", "app ", "apps")
+                  "3d", "app ", "apps",
+                  # the 2026-07-19 clutter wave: work-chatter that leaked past
+                  # the old list while Jacob was testing new abilities
+                  "github", "upload", "repositor", "download", "circle",
+                  "legend", "redesign", "database", "categoriz", "kipp",
+                  "improvement", "accent", "terminal", "notes box", "text box",
+                  "object detection", "vacuum", "quiet hour", "output device",
+                  "briefing", "agent")
+
+    # a durable fact never hinges on this exact moment — "Jacob is wearing a
+    # white shirt" and "I'm holding it right now" are states, not facts
+    TRANSIENT_TERMS = ("right now", "currently", "at the moment", "holding",
+                       "wearing", "just now", "today", "tonight",
+                       "this morning", "this afternoon", "on screen")
 
     @staticmethod
     def _grounded(fact: str, transcript_low: str) -> bool:
@@ -316,6 +507,44 @@ class Brain:
         hits = sum(1 for w in words if w in transcript_low)
         return hits >= 2 and hits * 2 >= len(words)
 
+    def _extract_thread(self, jacob_said: list[str], transcript_low: str) -> None:
+        """Continuity: find ONE open thread with a natural follow-up (a match
+        tonight, feeling crook, mate visiting) → open_thread.json. TARS asks
+        about it once, next conversation on a later day. Grounding required —
+        invented threads would be worse than none."""
+        try:
+            r = requests.post(
+                OLLAMA_URL,
+                json={"model": self.BG_MODEL, "stream": False, "think": False,
+                      "format": "json",
+                      "messages": [{"role": "user", "content":
+                          "Jacob said to his assistant:\n- "
+                          + "\n- ".join(jacob_said[-30:]) +
+                          "\n\nIs there ONE thing here a mate would naturally "
+                          "ask about NEXT TIME they talk — a match he was "
+                          "about to play, plans, feeling unwell, someone "
+                          "visiting? Commands to the assistant and anything "
+                          "about TARS itself NEVER count. Most conversations "
+                          "have none — empty is the normal answer. "
+                          "COPY JACOB'S EXACT WORDS for it — a verbatim "
+                          "phrase from the lines above. Do NOT rephrase, do "
+                          "NOT write a question, do NOT invent. Reply "
+                          'JSON: {"thread": "<his exact words>"} or '
+                          '{"thread": ""}.'}],
+                      "options": {"temperature": 0}},
+                timeout=120)
+            thread = str(json.loads(r.json()["message"]["content"]
+                                    ).get("thread", "")).strip()
+            if (thread and len(thread) > 8
+                    and not any(t in thread.lower() for t in self.SELF_TERMS)
+                    and self._grounded(thread, transcript_low)):
+                (self.base / "open_thread.json").write_text(json.dumps(
+                    {"thread": thread,
+                     "day": datetime.date.today().isoformat(),
+                     "asked": False}), encoding="utf-8")
+        except Exception:
+            pass
+
     def capture_conversation(self, lines: list[str]) -> None:
         """After a conversation ENDS, extract durable facts in one pass —
         each candidate is verified against the transcript before saving."""
@@ -323,6 +552,7 @@ class Brain:
         if not jacob_said:
             return
         transcript_low = " ".join(jacob_said).lower()
+        self._extract_thread(jacob_said, transcript_low)
         try:
             r = requests.post(
                 OLLAMA_URL,
@@ -337,7 +567,12 @@ class Brain:
                           "said — never infer, never embellish, never invent. "
                           "Commands to the assistant, questions, small talk, and "
                           "ANYTHING about TARS itself or this project (its brain, "
-                          "graph, camera, skills, cleanup work) are NOT facts. "
+                          "graph, camera, skills, GitHub uploads, cleanup work) "
+                          "are NOT facts. Only keep what will STILL BE TRUE IN A "
+                          "YEAR — identity, people, lasting preferences, "
+                          "possessions, history. NEVER moment-to-moment states: "
+                          "what he's holding, wearing, doing, or asking for "
+                          "right now. "
                           "MOST conversations contain NO durable facts — "
                           "an empty list is the normal answer. Reply JSON: "
                           '{"facts": ["<fact in Jacob\'s own words, third person>", '
@@ -350,6 +585,8 @@ class Brain:
                     continue
                 if any(t in fact.lower() for t in self.SELF_TERMS):
                     continue  # about TARS/the project, not about Jacob's life
+                if any(t in fact.lower() for t in self.TRANSIENT_TERMS):
+                    continue  # a passing state, not a durable fact
                 if self._grounded(fact, transcript_low):
                     self.skills.run("remember", {"fact": fact})
         except Exception:
@@ -383,8 +620,14 @@ class Brain:
             '{"skill": "new_skill", "args": {"request": "<his request>"}} — TARS '
             "teaches itself. 'Learn how to X' / 'teach yourself X' is ALWAYS "
             "new_skill, even when the request mentions the camera or screen — "
-            "learning about a device is not the same as opening it. "
+            "learning about a device is not the same as opening it — UNLESS an "
+            "existing skill already does exactly that thing (e.g. launching a "
+            "specific game Jacob owns is the steam skill, not new_skill). "
             "Never new_skill for questions or conversation. "
+            "CRITICAL: new_skill is ONLY for ABILITIES — things Jacob wants "
+            "TARS able to DO. Jacob TELLING TARS a fact about his life is "
+            "remember (if he says remember/don't forget) or chat (a plain "
+            "statement) — facts are memory, never a skill to learn. "
             'If the utterance reads like speech-recognition garbage — nonsense '
             "words, broken grammar that maps to no real intent — choose "
             '{"skill": "misheard"} instead of guessing. '
@@ -420,6 +663,18 @@ class Brain:
             'remove the formality setting -> {"skill": "personality", "args": {"action": "remove", "name": "formality"}}\n'
             'what are your settings -> {"skill": "personality", "args": {"action": "list"}}\n'
             'remember that i hate mondays -> {"skill": "remember", "args": {"fact": "Jacob hates Mondays"}}\n'
+            'remember my gate code is 4321 -> {"skill": "remember", "args": {"fact": "Jacob\'s gate code is 4321"}}\n'
+            'my first ever day at primary school was the 1st of february 2016, and i went to orbin grove primary school -> {"skill": "life_events", "args": {"text": "my first ever day at primary school was the 1st of February 2016, and I went to Orbin Grove Primary School"}}\n'
+            'if im in year 10 now and i went to olvingrove primary school, figure out when my first day of school was in olvingrove -> {"skill": "life_events", "args": {"text": "if I\'m in year 10 now and I went to Olvingrove Primary School, figure out when my first day of school was"}}\n'
+            'when did i start primary school -> {"skill": "life_events", "args": {"text": "when did I start primary school"}}\n'
+            'my sister sophie lives with us -> {"skill": "chat"}\n'
+            'i had pizza with luke last night -> {"skill": "chat"}\n'
+            'learn how to control my desk fan -> {"skill": "new_skill", "args": {"request": "control the desk fan"}}\n'
+            'teach yourself how to gamify your dashboard and give yourself levels for learning new skills -> {"skill": "new_skill", "args": {"request": "gamify the dashboard with levels that go up as TARS learns new skills"}}\n'
+            'i want you to respond faster -> {"skill": "new_skill", "args": {"request": "respond faster"}}\n'
+            'teach yourself how to find addresses -> {"skill": "new_skill", "args": {"request": "find addresses"}}\n'
+            'teach yourself to launch fc26 -> {"skill": "steam", "args": {"game": "fc 26"}}\n'
+            'teach yourself how to open my games -> {"skill": "steam", "args": {"game": "list"}}\n'
             'what do you know about my pc -> {"skill": "recall", "args": {"topic": "Jacob\'s PC"}}\n'
             'show me the home page -> {"skill": "open_dashboard", "args": {}}\n'
             'show me the brain -> {"skill": "open_brain", "args": {}}\n'
@@ -440,6 +695,54 @@ class Brain:
             'upload countdown dot py to github -> {"skill": "github_file", "args": {"file": "countdown.py"}}\n'
             'open a notes box -> {"skill": "notes_box", "args": {}}\n'
             'what objects do you see -> {"skill": "object_detection", "args": {}}\n'
+            'pause your self improvement -> {"skill": "improve", "args": {"action": "pause"}}\n'
+            'resume self improvement -> {"skill": "improve", "args": {"action": "resume"}}\n'
+            'what have you improved today -> {"skill": "improve", "args": {"action": "recent"}}\n'
+            'hows the self improvement going -> {"skill": "improve", "args": {"action": "status"}}\n'
+            'improve yourself now -> {"skill": "improve", "args": {"action": "now"}}\n'
+            'open obsidian -> {"skill": "open_app", "args": {"target": "obsidian"}}\n'
+            'open the fc web app -> {"skill": "open_app", "args": {"target": "fc web app"}}\n'
+            'open the fut web app -> {"skill": "open_app", "args": {"target": "fut web app"}}\n'
+            'in the fc web app, open where i can change my club name -> {"skill": "screen_task", "args": {"instruction": "in the FC web app, click the Club section in the navigation, then find where the club name can be changed and click it"}}\n'
+            'open the transfer market in the fc web app -> {"skill": "screen_task", "args": {"instruction": "in the FC web app, click Transfers in the navigation, then click the transfer market"}}\n'
+            'add milk to the shopping list -> {"skill": "lists", "args": {"action": "add", "list": "shopping", "item": "milk"}}\n'
+            'whats on my to do list -> {"skill": "lists", "args": {"action": "read", "list": "todo"}}\n'
+            'take milk off the shopping list -> {"skill": "lists", "args": {"action": "remove", "list": "shopping", "item": "milk"}}\n'
+            'remind me to take the bins out every tuesday at 8 pm -> {"skill": "recurring", "args": {"action": "add", "label": "take the bins out", "day": "tuesday", "time": "8 pm"}}\n'
+            'what are my weekly reminders -> {"skill": "recurring", "args": {"action": "list"}}\n'
+            'what did i do today -> {"skill": "day_recap", "args": {}}\n'
+            'hows my pc doing -> {"skill": "pc_health", "args": {}}\n'
+            'how much power am i making -> {"skill": "solar", "args": {"metric": "now"}}\n'
+            'how much has the solar made today -> {"skill": "solar", "args": {"metric": "today"}}\n'
+            'guest mode on -> {"skill": "guest_mode", "args": {"state": "on"}}\n'
+            'summarize this article -> {"skill": "read_page", "args": {}}\n'
+            'what does this page say -> {"skill": "read_page", "args": {}}\n'
+            'switch to the youtube tab -> {"skill": "tabs", "args": {"action": "switch", "tab": "youtube"}}\n'
+            'close this tab -> {"skill": "tabs", "args": {"action": "close", "tab": "this"}}\n'
+            'what tabs are open -> {"skill": "tabs", "args": {"action": "list"}}\n'
+            'move the screenshots from downloads into a folder called setup -> {"skill": "organize", "args": {"what": "screenshots", "source": "downloads", "dest": "Setup"}}\n'
+            'give me the goodnight report -> {"skill": "nightly_wrap", "args": {}}\n'
+            'show london on the map -> {"skill": "map_view", "args": {"action": "go", "place": "London"}}\n'
+            'take the map to tokyo -> {"skill": "map_view", "args": {"action": "go", "place": "Tokyo"}}\n'
+            'find hotels in subiaco on the map -> {"skill": "map_view", "args": {"action": "find", "query": "hotels", "place": "Subiaco"}}\n'
+            'zoom in on the map -> {"skill": "map_view", "args": {"action": "zoom", "direction": "in"}}\n'
+            'map home -> {"skill": "map_view", "args": {"action": "home"}}\n'
+            'open spotify -> {"skill": "open_app", "args": {"target": "spotify"}}\n'
+            'play some lo-fi beats -> {"skill": "music", "args": {"query": "lo-fi beats"}}\n'
+            'put on bohemian rhapsody -> {"skill": "music", "args": {"query": "Bohemian Rhapsody"}}\n'
+            'what song is this -> {"skill": "music", "args": {"action": "whats_playing"}}\n'
+            'what games do i have -> {"skill": "steam", "args": {"game": "list"}}\n'
+            'launch my last game -> {"skill": "steam", "args": {"game": "last"}}\n'
+            'launch fc 26 -> {"skill": "steam", "args": {"game": "fc 26"}}\n'
+            'tell me when the download finishes -> {"skill": "screen_watch", "args": {"for": "the download to finish"}}\n'
+            'stop watching the screen -> {"skill": "screen_watch", "args": {"for": "stop"}}\n'
+            'type what i say -> {"skill": "dictation", "args": {}}\n'
+            'take dictation -> {"skill": "dictation", "args": {}}\n'
+            'click the search bar and search for funny dogs -> {"skill": "click_screen", "args": {"target": "the search bar", "type": "funny dogs", "enter": "true"}}\n'
+            'search for lofi girl on that page -> {"skill": "click_screen", "args": {"target": "the search box", "type": "lofi girl", "enter": "true"}}\n'
+            'click the search bar, type lofi music, then find a video five minutes or longer and click it -> {"skill": "screen_task", "args": {"instruction": "click the search bar, type lofi music, then find a video five minutes or longer and click it"}}\n'
+            'open the comments and find the top comment -> {"skill": "screen_task", "args": {"instruction": "open the comments and find the top comment"}}\n'
+            'click the first video -> {"skill": "click_screen", "args": {"target": "the first video thumbnail"}}\n'
             'use a british accent -> {"skill": "voice_settings", "args": {"voice": "british"}}\n'
             'sound like an american female -> {"skill": "voice_settings", "args": {"voice": "american female"}}\n'
             'talk faster -> {"skill": "voice_settings", "args": {"rate": "+15"}}\n'
@@ -520,9 +823,15 @@ class Brain:
 
         now = datetime.datetime.now().strftime("%A %d %B %Y, around %I %p")
         skill_names = ", ".join(s["skill"] for s in self.skills.catalog())
+        guest = False
+        try:
+            guest = json.loads((self.base / "guest_mode.json")
+                               .read_text(encoding="utf-8")).get("on", False)
+        except (OSError, json.JSONDecodeError):
+            pass
         about = []
         about_dir = self.base / "vault" / "About Jacob"
-        if about_dir.exists():
+        if not guest and about_dir.exists():
             for note in sorted(about_dir.glob("*.md")):
                 body = note.read_text(encoding="utf-8").split("---")[-1]
                 about += [l.strip("- ").strip() for l in body.splitlines()
@@ -618,6 +927,32 @@ class Brain:
         ]
         return answer
 
+    # mood detection: word-level cues, deterministic — no model call needed
+    FRUSTRATED = ("for fuck", "ffs", "fucking hell", "goddamn", "god damn",
+                  "useless", "wrong again", "still wrong", "not what i",
+                  "why won't", "why wont", "stop it", "seriously", "ugh",
+                  "come on", "again?!", "you keep", "third time", "in circles")
+    EXCITED = ("let's go", "lets go", "yes!", "awesome", "amazing", "sick",
+               "insane", "love it", "love that", "so good", "works great",
+               "brilliant", "unbelievable", "no way")
+
+    def _mood(self, text: str) -> str:
+        low = text.lower()
+        recent = " ".join(m["content"].lower()
+                          for m in self.history[-6:] if m["role"] == "user")
+        if any(w in low for w in self.FRUSTRATED):
+            return ("\nMOOD: Jacob sounds FRUSTRATED right now. Drop the wit "
+                    "completely. Be brief, calm and useful — acknowledge the "
+                    "annoyance in a few words, no jokes, no questions unless "
+                    "essential, just help.")
+        if any(w in recent for w in self.FRUSTRATED) and len(low) < 60:
+            return ("\nMOOD: Jacob was frustrated a moment ago — stay brief "
+                    "and steady until he's clearly back to normal.")
+        if any(w in low for w in self.EXCITED):
+            return ("\nMOOD: Jacob sounds genuinely EXCITED. Match the energy "
+                    "— celebrate with him, short and punchy.")
+        return ""
+
     def _chat_messages(self, text: str) -> list[dict]:
         system = self._system_prompt()
         try:
@@ -627,6 +962,21 @@ class Brain:
             if fired:
                 system += ("\n\nYour memory fired these associations "
                            "(use them if relevant, don't recite them):\n" + fired)
+        except Exception:
+            pass
+        system += self._mood(text)  # volatile — stays after the cached prefix
+        # continuity: one natural follow-up on yesterday's open thread
+        try:
+            tf = self.base / "open_thread.json"
+            th = json.loads(tf.read_text(encoding="utf-8"))
+            if (th.get("thread") and not th.get("asked")
+                    and th.get("day") != datetime.date.today().isoformat()):
+                system += ("\nCONTINUITY: last time you spoke, Jacob "
+                           f"mentioned: \"{th['thread']}\". If a natural "
+                           "moment comes, ask him how it went — once, "
+                           "briefly, like a mate would — then let it go.")
+                th["asked"] = True
+                tf.write_text(json.dumps(th), encoding="utf-8")
         except Exception:
             pass
         return ([{"role": "system", "content": system}]

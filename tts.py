@@ -97,12 +97,95 @@ async def _fetch_mp3(text: str) -> bytes:
 ACKS = ("Right.", "On it.", "Okay.")
 
 
+_VOSK_STOP = None  # cached vosk model for the "stop" interrupt listener
+
+
 class Speaker:
     def __init__(self):
         self._ack_cache: dict[str, tuple] = {}
         import threading
 
+        self._stop = threading.Event()  # set = Jacob said "stop", shut up
         threading.Thread(target=self._preload_acks, daemon=True).start()
+
+    @staticmethod
+    def _night(audio):
+        """Night mode: softer voice during quiet hours."""
+        try:
+            import quiet
+
+            if quiet.is_active()[0]:
+                return audio * 0.55
+        except Exception:
+            pass
+        return audio
+
+    def _play(self, audio, sr) -> bool:
+        """Play, interruptibly: polls the stop flag while audio runs.
+        Returns False if Jacob cut it off."""
+        import time as _t
+
+        device = None
+        try:
+            import audio_out
+
+            device = audio_out.output_index()  # survives PortAudio resets
+        except Exception:
+            pass
+        try:
+            sd.play(self._night(audio), sr, device=device)
+        except Exception:
+            sd.play(self._night(audio), sr)  # any trouble → default device
+        total = len(audio) / float(sr)
+        t0 = _t.time()
+        while _t.time() - t0 < total + 0.25:
+            if self._stop.is_set():
+                sd.stop()
+                return False
+            _t.sleep(0.05)
+        sd.wait()
+        return True
+
+    def _arm_stop_listener(self):
+        """While TARS talks, a tiny keyword-spotter listens for 'stop'.
+        Returns a disarm() callable. Fails safe: no listener, no harm."""
+        import json as _json
+        import threading
+
+        global _VOSK_STOP
+        try:
+            from pathlib import Path
+
+            from vosk import KaldiRecognizer, Model
+
+            if _VOSK_STOP is None:
+                _VOSK_STOP = Model(str(Path(__file__).parent / "wakeword"
+                                       / "vosk-model-small-en-us-0.15"))
+            rec = KaldiRecognizer(_VOSK_STOP, 16000, '["stop", "[unk]"]')
+            import audio_out
+
+            device = audio_out.pick_input()
+            alive = {"on": True}
+
+            def listen():
+                try:
+                    with sd.RawInputStream(samplerate=16000, blocksize=1600,
+                                           dtype="int16", channels=1,
+                                           device=device) as stream:
+                        while alive["on"] and not self._stop.is_set():
+                            data, _ = stream.read(1600)
+                            if rec.AcceptWaveform(bytes(data)):
+                                heard = _json.loads(rec.Result()).get("text", "")
+                                if "stop" in heard:
+                                    self._stop.set()
+                                    return
+                except Exception:
+                    pass
+
+            threading.Thread(target=listen, daemon=True).start()
+            return lambda: alive.update(on=False)
+        except Exception:
+            return lambda: None
 
     def _preload_acks(self):
         for phrase in ACKS:
@@ -137,39 +220,73 @@ class Speaker:
 
         def producer():
             for s in sentences:
+                if self._stop.is_set():
+                    break  # Jacob cut it off — stop synthesizing too
                 if not s:
                     continue
                 res = _synth(s)
-                if res is not None:
-                    q.put((s, res[0], res[1]))
-                else:
-                    q.put((s, None, None))  # fall back to offline voice
-            q.put(DONE)
+                item = (s, res[0], res[1]) if res is not None else (s, None, None)
+                while not self._stop.is_set():
+                    try:
+                        q.put(item, timeout=0.5)
+                        break
+                    except queue.Full:
+                        continue
+            try:
+                q.put_nowait(DONE)
+            except queue.Full:
+                pass
 
         threading.Thread(target=producer, daemon=True).start()
         spoken = []
-        while True:
-            item = q.get()
-            if item is DONE:
-                break
-            s, audio, sr = item
-            spoken.append(s)
-            if audio is not None:
-                sd.play(audio, sr)
-                sd.wait()
-            else:
-                self._say_offline(s)
+        import duck
+        self._stop.clear()
+        disarm = self._arm_stop_listener()
+        duck.duck()  # games/music dip while TARS talks
+        try:
+            idle = 0
+            while not self._stop.is_set() and idle < 120:  # 60s dead air = bail
+                try:
+                    item = q.get(timeout=0.5)
+                except queue.Empty:
+                    idle += 1
+                    continue
+                idle = 0
+                if item is DONE:
+                    break
+                s, audio, sr = item
+                spoken.append(s)
+                if audio is not None:
+                    if not self._play(audio, sr):
+                        break  # Jacob said stop — drop the rest
+                else:
+                    self._say_offline(s)
+            while not q.empty():  # unblock the producer
+                try:
+                    q.get_nowait()
+                except queue.Empty:
+                    break
+        finally:
+            disarm()
+            duck.restore()
         return " ".join(spoken)
 
     def say(self, text: str) -> None:
         if not text:
             return
         res = _synth(text)
-        if res is not None:
-            sd.play(res[0], res[1])
-            sd.wait()
-        else:
-            self._say_offline(text)
+        import duck
+        self._stop.clear()
+        disarm = self._arm_stop_listener()
+        duck.duck()  # games/music dip while TARS talks
+        try:
+            if res is not None:
+                self._play(res[0], res[1])
+            else:
+                self._say_offline(text)
+        finally:
+            disarm()
+            duck.restore()
 
     def _say_offline(self, text: str) -> None:
         import pyttsx3

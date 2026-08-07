@@ -13,12 +13,32 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 BASE = Path(__file__).parent
+BRAIN = None  # set by main.py — used by the "Teach TARS" box
 PORT = 8765
 
 state = {"status": "starting"}
 _cache: dict = {"skills": (0.0, []), "weather": (0.0, "")}
 LATEST_JPEG: tuple[float, bytes] = (0.0, b"")  # newest live-feed frame, shared
 # with the camera skill so "what do you see" works while the feed is open
+
+# every TTS voice TARS can speak with — mirrors skills/list_voices + voice_settings
+VOICES = [
+    {"id": "bm_george", "name": "George", "desc": "British male — default"},
+    {"id": "bm_fable", "name": "Fable", "desc": "British male"},
+    {"id": "bm_lewis", "name": "Lewis", "desc": "British male"},
+    {"id": "bm_daniel", "name": "Daniel", "desc": "British male"},
+    {"id": "bf_emma", "name": "Emma", "desc": "British female"},
+    {"id": "bf_isabella", "name": "Isabella", "desc": "British female"},
+    {"id": "en-GB-RyanNeural", "name": "Ryan", "desc": "British male"},
+    {"id": "en-GB-SoniaNeural", "name": "Sonia", "desc": "British female"},
+    {"id": "en-US-GuyNeural", "name": "Guy", "desc": "US male"},
+    {"id": "en-US-JennyNeural", "name": "Jenny", "desc": "US female"},
+    {"id": "en-US-AriaNeural", "name": "Aria", "desc": "US female"},
+    {"id": "en-US-DavisNeural", "name": "Davis", "desc": "US male"},
+    {"id": "en-AU-WilliamNeural", "name": "William", "desc": "Australian male"},
+    {"id": "en-AU-NatashaNeural", "name": "Natasha", "desc": "Australian female"},
+]
+VOICE_IDS = {v["id"] for v in VOICES}
 
 
 def set_status(s: str) -> None:
@@ -37,6 +57,32 @@ def _skills() -> list[dict]:
         added = datetime.date.fromtimestamp(py.stat().st_mtime).strftime("%d %b")
         out.append({"name": item["skill"], "desc": item["description"], "added": added})
     _cache["skills"] = (time.time(), out)
+    return out
+
+
+def _learning() -> list[dict]:
+    """The 'Learning' dashboard card: skills TARS has most recently taught
+    himself, newest first — NOT Kipp's proposed-upgrades queue (that's the
+    separate 'kipp' card/log), just the actual finished output of the
+    self-teaching pipeline (skills/<name>/skill.py), sorted by file age."""
+    ts, cached = _cache.get("learning", (0.0, []))
+    if time.time() - ts < 60:
+        return cached
+    from skills_engine import SkillBox
+
+    rows = []
+    for item in SkillBox(BASE).catalog():
+        py = BASE / "skills" / item["skill"] / "skill.py"
+        try:
+            mtime = py.stat().st_mtime
+        except OSError:
+            continue
+        rows.append({"name": item["skill"], "desc": item["description"], "mtime": mtime})
+    rows.sort(key=lambda r: -r["mtime"])
+    out = [{"name": r["name"], "desc": r["desc"],
+            "added": datetime.date.fromtimestamp(r["mtime"]).strftime("%d %b")}
+           for r in rows[:3]]
+    _cache["learning"] = (time.time(), out)
     return out
 
 
@@ -93,6 +139,21 @@ def _payload() -> dict:
         "skills": _skills(),
         "brain": {"count": len(notes), "recent": recent},
     }
+
+
+def _voice_payload() -> dict:
+    current = "bm_george"
+    try:
+        import tts
+
+        current = tts.VOICE
+    except Exception:
+        try:
+            data = json.loads((BASE / "voice_settings.json").read_text(encoding="utf-8"))
+            current = data.get("voice", current)
+        except Exception:
+            pass
+    return {"voices": VOICES, "current": current}
 
 
 def _brain_payload() -> dict:
@@ -179,6 +240,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        # browsers cached the old dashboard and kept showing it after
+        # redesigns ("the old version isn't closed") — never cache
+        self.send_header("Cache-Control", "no-store, must-revalidate")
         self.end_headers()
         self.wfile.write(body)
 
@@ -195,6 +259,49 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, js, "application/javascript")
         elif route == "/api/state":
             self._send(200, json.dumps(_payload()).encode(), "application/json")
+        elif route == "/api/map":
+            try:
+                data = (BASE / "map_state.json").read_text(encoding="utf-8")
+            except OSError:
+                data = ('{"center": [-31.95, 115.86], "zoom": 11, '
+                        '"label": "PERTH — HOME", "markers": [], "t": 0}')
+            self._send(200, data.encode(), "application/json")
+        elif route == "/api/streetview":
+            try:
+                data = (BASE / "street_view_state.json").read_text(encoding="utf-8")
+            except OSError:
+                data = ('{"active": false, "lat": -31.95, "lon": 115.86, '
+                        '"label": "", "t": 0}')
+            self._send(200, data.encode(), "application/json")
+        elif route == "/api/proposals":
+            try:
+                import improve
+
+                data = json.dumps({"proposals": improve.get_proposals()})
+            except Exception:
+                data = '{"proposals": []}'
+            self._send(200, data.encode(), "application/json")
+        elif route == "/api/extras":
+            extras = {"lists": {}, "kipp": [], "learning": []}
+            try:
+                extras["lists"] = json.loads(
+                    (BASE / "lists.json").read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                pass
+            try:
+                lines = (BASE / "improvements.log").read_text(
+                    encoding="utf-8").splitlines()
+                extras["kipp"] = [l.split(" ", 1)[1] for l in lines
+                                  if "DONE: " in l or "PROPOSED" in l][-4:]
+            except OSError:
+                pass
+            try:
+                extras["learning"] = _learning()
+            except Exception:
+                pass
+            self._send(200, json.dumps(extras).encode(), "application/json")
+        elif route == "/api/voices":
+            self._send(200, json.dumps(_voice_payload()).encode(), "application/json")
         elif route == "/api/brain":
             self._send(200, json.dumps(_brain_payload()).encode(), "application/json")
         elif route == "/api/brain/note":
@@ -286,6 +393,73 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
             self._send(200, json.dumps({"fired": fired}).encode(), "application/json")
+        elif self.path == "/api/proposals":
+            # Build / Ignore click on one of Kipp's proposal cards
+            length = int(self.headers.get("Content-Length", 0))
+            data = json.loads(self.rfile.read(length))
+            try:
+                import improve
+
+                ok = improve.decide(str(data.get("title", "")),
+                                    data.get("decision") == "build")
+                self._send(200 if ok else 404,
+                           json.dumps({"ok": ok}).encode(), "application/json")
+            except Exception:
+                self._send(500, b'{"ok": false}', "application/json")
+        elif self.path == "/api/learn":
+            # the dashboard's "Teach TARS" box — typed learning requests,
+            # precise where speech gets misheard. BRAIN is set by main.py.
+            length = int(self.headers.get("Content-Length", 0))
+            data = json.loads(self.rfile.read(length))
+            request = str(data.get("request", "")).strip()[:600]
+            if not request:
+                self._send(400, b'{"error": "empty"}', "application/json")
+            elif BRAIN is None:
+                self._send(503, b'{"error": "brain not ready"}', "application/json")
+            else:
+                try:
+                    BRAIN.skills.run(
+                        "deep_task", {"task": BRAIN._learning_task(request)})
+                    self._send(200, b'{"ok": true}', "application/json")
+                except Exception:
+                    self._send(500, b'{"error": "failed"}', "application/json")
+        elif self.path == "/api/shutdown":
+            # the window's power button: reply first, then die cleanly
+            self._send(200, b'{"bye": true}', "application/json")
+
+            def _die():
+                import os
+                import time as _t
+
+                set_status("offline")
+                _t.sleep(0.6)
+                os._exit(0)
+
+            threading.Thread(target=_die, daemon=True).start()
+        elif self.path == "/api/voice":
+            length = int(self.headers.get("Content-Length", 0))
+            data = json.loads(self.rfile.read(length))
+            voice_id = str(data.get("id", ""))
+            if voice_id in VOICE_IDS:
+                path = BASE / "voice_settings.json"
+                try:
+                    saved = json.loads(path.read_text(encoding="utf-8"))
+                except Exception:
+                    saved = {}
+                saved["voice"] = voice_id
+                saved.setdefault("rate", "+8%")
+                saved.setdefault("smooth", False)
+                path.write_text(json.dumps(saved, indent=2), encoding="utf-8")
+                try:
+                    import tts
+
+                    tts.VOICE = voice_id
+                except Exception:
+                    pass
+                self._send(200, json.dumps({"ok": True, "current": voice_id}).encode(),
+                           "application/json")
+            else:
+                self._send(400, b'{"ok": false}', "application/json")
         elif self.path == "/api/settings":
             length = int(self.headers.get("Content-Length", 0))
             data = json.loads(self.rfile.read(length))
@@ -305,9 +479,14 @@ class Handler(BaseHTTPRequestHandler):
 
 def start() -> None:
     def serve():
-        try:
-            ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
-        except OSError:
-            pass  # port taken (old instance still shutting down) — not fatal
+        # the old instance can hold the port while dying — retry FOREVER
+        # rather than give up (a 15s retry window once expired and left the
+        # engine with no dashboard at all; daemon thread, so looping is free)
+        while True:
+            try:
+                ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+                return
+            except OSError:
+                time.sleep(2)
 
     threading.Thread(target=serve, daemon=True).start()

@@ -71,3 +71,25 @@ def apply_saved() -> None:
         set_output(saved.get("target", ""))
     except (FileNotFoundError, json.JSONDecodeError):
         pass
+
+
+_out_cache: dict = {"t": 0.0, "idx": None}
+
+
+def output_index() -> int | None:
+    """The saved output device, re-resolved fresh (5s cache). tts passes
+    this to EVERY play — sd.default silently reverts to system default
+    whenever the mic-crash recovery reinitializes PortAudio, which once
+    left Jacob's voice on unworn headphones while he sat at the monitor."""
+    import time
+
+    if time.time() - _out_cache["t"] < 5:
+        return _out_cache["idx"]
+    idx = None
+    try:
+        saved = json.loads(FILE.read_text(encoding="utf-8"))
+        idx, _ = resolve(saved.get("target", ""))
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    _out_cache.update(t=time.time(), idx=idx)
+    return idx
