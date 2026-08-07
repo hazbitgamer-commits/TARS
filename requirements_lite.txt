@@ -11,6 +11,8 @@ Pillow
 ddgs
 edge-tts
 pyttsx3
+truststore
+soundfile
 
 # optional extras — uncomment if wanted
 # claude-agent-sdk        # the self-teaching big brain (needs a Claude token)

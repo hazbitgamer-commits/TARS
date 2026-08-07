@@ -6,9 +6,13 @@ Flow: wake word ("Hey Jarvis" for now, custom "TARS" later) -> record command
 Wake word engine: openWakeWord — fully local, free, no account needed.
 If it fails to load, falls back to press-Enter-to-talk.
 """
-import truststore
+try:
+    import truststore
 
-truststore.inject_into_ssl()  # trust Windows' certificate store (Avast intercepts TLS)
+    truststore.inject_into_ssl()  # trust the OS certificate store (an old
+    # Avast-era fix on Windows; harmless elsewhere, optional everywhere)
+except ImportError:
+    pass  # a Mac without it boots fine — this crashed the first Mac install
 
 import datetime
 import json
