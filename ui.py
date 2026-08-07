@@ -22,6 +22,13 @@ W, H = 230, 38
 class StatusUI:
     def __init__(self):
         self._q: queue.Queue[str] = queue.Queue()
+        import sys
+
+        if sys.platform != "win32":
+            # macOS kills the whole process (NSException) when Tk runs off
+            # the main thread — first real Mac boot died exactly here.
+            # On Mac/Linux the dashboard is TARS's face; no pill.
+            return
         threading.Thread(target=self._run, daemon=True).start()
 
     def set(self, state: str) -> None:

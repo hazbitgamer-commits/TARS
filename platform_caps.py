@@ -32,6 +32,7 @@ BLOCKED_OFF_WINDOWS = {
     "voice_output", "delete_files", "organize", "type_text", "keyboard",
     "media", "dictation", "vacuum", "vacuum_room", "vacuum_speed",
     "speakers", "quiet_hours",
+    "notes_box",  # Tk popup — same NSException risk on macOS as the pill
 }
 
 
