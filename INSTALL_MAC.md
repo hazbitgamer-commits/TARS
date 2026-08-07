@@ -12,28 +12,32 @@ makes the next attempt better.
 
 Works best on Apple Silicon (M1/M2/M3/M4) with 16 GB memory.
 
-## 1. Install the AI brain (Ollama)
-Download and install from https://ollama.com/download/mac — then in
-Terminal:
+## The one-paste install
 
-    ollama pull qwen2.5:7b
-    ollama cp qwen2.5:7b qwen2.5:7b-router
-    ollama pull qwen3:8b
+Open Terminal (press Cmd+Space, type "terminal", press Enter), paste
+this single line, and press Enter:
 
-(That's ~10 GB of AI models — give it time.)
+    curl -fsSL https://raw.githubusercontent.com/hazbitgamer-commits/TARS/main/get_tars.sh | bash
 
-## 2. Get TARS
-    git clone https://github.com/hazbitgamer-commits/TARS.git
-    cd TARS
+It installs everything: Ollama and its AI models (~10 GB — the long
+part), TARS himself, and his voice and hearing (~400 MB). If macOS pops
+up asking to install developer tools first, click Install, wait, then
+paste the same line again.
 
-## 3. Run the setup script
-    bash setup_mac.sh
+Then start TARS any time with:
 
-This creates a private Python environment, installs the libraries, and
-downloads the hearing (Vosk) and voice (Kokoro) models (~400 MB).
+    cd ~/TARS && bash tars_mac.sh
 
-## 4. Start TARS
-    bash tars_mac.sh
+<details><summary>Manual steps (if you'd rather do it piece by piece)</summary>
+
+1. Install Ollama from https://ollama.com/download/mac, then:
+   `ollama pull qwen2.5:7b`, `ollama cp qwen2.5:7b qwen2.5:7b-router`,
+   `ollama pull qwen3:8b`
+2. `git clone https://github.com/hazbitgamer-commits/TARS.git && cd TARS`
+3. `bash setup_mac.sh`
+4. `bash tars_mac.sh`
+
+</details>
 
 macOS will ask for **Microphone** permission the first time — allow it,
 or TARS is deaf. The dashboard opens in your browser; say **"Hey TARS"**
