@@ -43,7 +43,9 @@ class Brain:
 
     def _learning_task(self, request: str) -> str:
         skills_dir = self.base / "skills"
-        runtime_py = self.base / "runtime" / "python.exe"
+        from platform_caps import python_cmd
+
+        runtime_py = python_cmd(self.base)
         example = (skills_dir / "volume" / "skill.py").read_text(encoding="utf-8")
         existing = "\n".join(
             f"- {s['skill']}: {s['description']}" for s in self.skills.catalog())
@@ -368,6 +370,15 @@ class Brain:
                                               "pick")) >= 3):
             name = "screen_task"
             route["args"] = {"instruction": text}
+        # GitHub WORK never goes to chat — it spent a whole evening claiming
+        # "[Pushing updates to GitHub... done.]" in fake brackets while the
+        # repo sat untouched. Real repo changes need the big brain's hands.
+        if name == "chat" and ("github" in lowered or "readme" in lowered) \
+                and any(w in lowered for w in ("update", "push", "upload",
+                                               "publish", "add", "change",
+                                               "edit", "put", "fix")):
+            name = "deep_task"
+            route["args"] = {"task": text}
         # chat must NEVER narrate action chains ("copy this, paste it there,
         # click enter") — it once announced its own bluff as "a placeholder
         # action". Two-plus concrete PC verbs = a job, not a conversation.
@@ -848,9 +859,11 @@ class Brain:
             "In conversation you can only TALK. You cannot run code, open things, "
             "or act — actions happen through skills, outside this chat. NEVER "
             "claim an action happened ('Playing it now', 'Done!') — that is "
-            "lying. If Jacob asks for an action, tell him plainly to say it as "
-            "a command so the right skill can do it. No stage directions, no "
-            "asterisks.",
+            "lying. NEVER write bracketed fake actions like '[Pushing updates... "
+            "done.]' or '[Checking status...]' — those are lies in costume, and "
+            "Jacob has caught you doing it. If Jacob asks for an action, say "
+            "you'll need him to give it as a command, or say plainly that you "
+            "haven't done it. No stage directions, no asterisks.",
             "Never invent memories, people, or past conversations. If Jacob says "
             "a name or thing you don't actually know, say you don't know it.",
             "When you're teaching yourself a new skill (a big-brain task is "

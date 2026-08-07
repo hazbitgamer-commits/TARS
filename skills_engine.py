@@ -24,8 +24,16 @@ class SkillBox:
         skills = {}
         if not self.dir.exists():
             return skills
+        try:
+            from platform_caps import blocked_skills
+
+            blocked = blocked_skills()
+        except Exception:
+            blocked = set()
         for py in sorted(self.dir.glob("*/skill.py")):
             name = py.parent.name
+            if name in blocked:  # Windows-only ability on a non-Windows body
+                continue
             try:
                 mtime = py.stat().st_mtime
                 cached = self._cache.get(name)

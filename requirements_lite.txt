@@ -1,0 +1,17 @@
+# TARS Lite — the portable core (Mac/Linux)
+numpy
+sounddevice
+vosk
+faster-whisper
+kokoro-onnx
+requests
+psutil
+python-dotenv
+Pillow
+ddgs
+edge-tts
+pyttsx3
+
+# optional extras — uncomment if wanted
+# claude-agent-sdk        # the self-teaching big brain (needs a Claude token)
+# python-telegram-bot     # not needed: the phone bridge uses plain requests

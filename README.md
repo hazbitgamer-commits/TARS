@@ -129,7 +129,15 @@ If it ever breaks, re-extract `python312.tar.gz` here and rename `python` → `r
 
 ## Can I run TARS on a Mac?
 
-**Short honest answer: not yet.** TARS was built for Windows and many of his
+**Yes — TARS Lite.** See **INSTALL_MAC.md** for the step-by-step guide:
+voice conversation, hearing, his voice, the dashboard, timers, lists,
+weather and web answers all run on a Mac (Apple Silicon recommended).
+The Windows-only hands (app control, screen clicking, camera) don't — the
+guide is honest about exactly what works. Lite mode is tested in Lite
+form on TARS's home machine; a real-Mac test run is still to come.
+
+*(Original answer, kept for honesty about the full version:)*
+**Full TARS: not yet.** TARS was built for Windows and many of his
 organs are Windows-only — the microphone/speaker handling, the webcam feed,
 opening and controlling apps, the screen capture used by his eyes, and the
 launcher scripts are all wired to Windows.
@@ -146,7 +154,3 @@ What a true Mac port would need: replacing the Windows-specific pieces
 (audio device control, screen/webcam capture, app launching, the .bat
 launchers) with macOS equivalents. It's a real project, not an install step —
 if it ever happens, instructions will appear right here.
-
-**Want to download the code and help?** See [MAC_TUTORIAL.md](MAC_TUTORIAL.md)
-for a beginner-friendly guide to downloading this repo on a Mac (no Git
-knowledge needed), what you can try today, and how to pitch in on a Mac port.

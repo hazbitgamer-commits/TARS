@@ -17,13 +17,16 @@ ARGS = {"task": "the full task, in Jacob's words"}
 BASE = Path(__file__).resolve().parents[2]
 WORKSHOP = BASE / "workshop"
 
+import sys as _sys
+
+_TARS_PY = (str(BASE / "runtime" / "python.exe") if _sys.platform == "win32"
+            else (_sys.executable or "python3"))
 RULES = (
     "Hard rules, no exceptions: never delete files outside the working folder; "
     "never spend money or make purchases; never send emails or messages; "
     "keep all new files inside the working folder unless the task explicitly "
     "names another location. Jacob is a beginner — keep anything he'll see simple.\n"
-    f"The system Python on this PC is broken — to run Python, always use: "
-    f"{BASE / 'runtime' / 'python.exe'}"
+    f"To run Python, always use TARS's own interpreter: {_TARS_PY}"
 )
 
 

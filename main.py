@@ -187,10 +187,11 @@ def ensure_single_instance() -> None:
             if not readable:
                 # unreadable command line = the wedged-zombie signature
                 # (one from 19:25 survived every polite sweep that way);
-                # if it runs from TARS's own runtime, it's a dead TARS.
+                # if it runs from TARS's own interpreter, it's a dead TARS.
                 # Healthy diagnostic scripts stay untouched — theirs read.
                 try:
-                    mine = "\\projects\\tars\\runtime\\" in (p.exe() or "").lower()
+                    exe = (p.exe() or "").lower().replace("\\", "/")
+                    mine = "/tars/runtime/" in exe or "/tars/.venv/" in exe
                 except Exception:
                     mine = False
             if mine:
