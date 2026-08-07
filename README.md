@@ -146,3 +146,7 @@ What a true Mac port would need: replacing the Windows-specific pieces
 (audio device control, screen/webcam capture, app launching, the .bat
 launchers) with macOS equivalents. It's a real project, not an install step —
 if it ever happens, instructions will appear right here.
+
+**Want to download the code and help?** See [MAC_TUTORIAL.md](MAC_TUTORIAL.md)
+for a beginner-friendly guide to downloading this repo on a Mac (no Git
+knowledge needed), what you can try today, and how to pitch in on a Mac port.
