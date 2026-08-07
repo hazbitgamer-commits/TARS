@@ -232,10 +232,14 @@ class Speaker:
                         break
                     except queue.Full:
                         continue
-            try:
-                q.put_nowait(DONE)
-            except queue.Full:
-                pass
+            # DONE must ARRIVE — dropping it on a full queue once left TARS
+            # frozen in "Speaking…" for 60s after every long reply
+            while not self._stop.is_set():
+                try:
+                    q.put(DONE, timeout=0.5)
+                    break
+                except queue.Full:
+                    continue
 
         threading.Thread(target=producer, daemon=True).start()
         spoken = []
@@ -245,7 +249,7 @@ class Speaker:
         duck.duck()  # games/music dip while TARS talks
         try:
             idle = 0
-            while not self._stop.is_set() and idle < 120:  # 60s dead air = bail
+            while not self._stop.is_set() and idle < 16:  # 8s dead air = bail
                 try:
                     item = q.get(timeout=0.5)
                 except queue.Empty:

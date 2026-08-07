@@ -126,3 +126,23 @@ and hard tasks go through Jacob's existing Claude subscription (later phase).
 ## Repair kit
 TARS has its own private Python in `runtime/` (nothing else on the PC touches it).
 If it ever breaks, re-extract `python312.tar.gz` here and rename `python` → `runtime`.
+
+## Can I run TARS on a Mac?
+
+**Short honest answer: not yet.** TARS was built for Windows and many of his
+organs are Windows-only — the microphone/speaker handling, the webcam feed,
+opening and controlling apps, the screen capture used by his eyes, and the
+launcher scripts are all wired to Windows.
+
+What a Mac user CAN do today:
+- **Read everything.** All of TARS's code is in this repository — the brain
+  (`brain.py`), the self-improvement agent (`improve.py`), every skill in
+  `skills/`, and the dashboard. It's a complete picture of how he works.
+- **Reuse the brains.** The AI models TARS runs on — Ollama (chat + routing),
+  faster-whisper (hearing), and Kokoro (voice) — all exist on macOS, so the
+  thinking parts of a Mac TARS are entirely possible.
+
+What a true Mac port would need: replacing the Windows-specific pieces
+(audio device control, screen/webcam capture, app launching, the .bat
+launchers) with macOS equivalents. It's a real project, not an install step —
+if it ever happens, instructions will appear right here.
