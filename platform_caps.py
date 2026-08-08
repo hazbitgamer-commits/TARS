@@ -53,9 +53,11 @@ def bg_model() -> str:
 
 def router_model() -> str:
     """Windows runs a second instance of the chat model so router and chat
-    keep separate prompt caches (2x latency win there). On Lite, one
-    instance for both — Apple silicon reprocesses prompts fast enough."""
-    return CHAT_MODEL if LITE else "qwen2.5:7b-router"
+    keep separate prompt caches (2x latency win there). Lite v2: a NIMBLE
+    3B routes — the routing step is the felt latency on every command, and
+    the deterministic hard gates catch what a small router fumbles.
+    (7B chat + 3B router ≈ 7.5GB resident — comfortable in 16GB.)"""
+    return "qwen2.5:3b" if LITE else "qwen2.5:7b-router"
 
 
 def python_cmd(base: Path | None = None) -> str:
