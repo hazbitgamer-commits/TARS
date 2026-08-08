@@ -23,11 +23,12 @@ def ollama():
 
     r = requests.get("http://127.0.0.1:11434/api/tags", timeout=5)
     names = [m["name"] for m in r.json().get("models", [])]
-    need = [n for n in ("qwen2.5:7b", "qwen2.5:7b-router") if not any(
+    need = [n for n in ("qwen2.5:7b", "qwen2.5:3b") if not any(
         n in x for x in names)]
     if need:
-        raise RuntimeError(f"models missing: {need} — run the ollama pull commands")
-    return f"{len(names)} models ready"
+        raise RuntimeError(f"models missing: {need} — re-run the installer "
+                           "one-liner (it pulls them)")
+    return f"{len(names)} models ready (7b talks, 3b routes)"
 
 
 def vosk_model():
