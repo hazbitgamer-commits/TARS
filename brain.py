@@ -910,6 +910,25 @@ class Brain:
             r.raise_for_status()
             return json.loads(r.json()["message"]["content"])
         except Exception:
+            # router model unavailable (e.g. Lite's 3b not pulled yet) —
+            # fall back to the chat model rather than degrading every
+            # command into conversation ("TARS talks but does nothing")
+            if ROUTER_MODEL != MODEL:
+                try:
+                    r = requests.post(
+                        OLLAMA_URL,
+                        json={"model": MODEL,
+                              "messages": [
+                                  {"role": "system", "content": system},
+                                  {"role": "user", "content": text}],
+                              "stream": False, "format": "json",
+                              "keep_alive": KEEP_ALIVE,
+                              "options": {"temperature": 0}},
+                        timeout=60)
+                    r.raise_for_status()
+                    return json.loads(r.json()["message"]["content"])
+                except Exception:
+                    pass
             return {"skill": "chat"}
 
     def _settings(self) -> dict:
