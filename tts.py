@@ -93,8 +93,11 @@ async def _fetch_mp3(text: str) -> bytes:
     return buf.getvalue()
 
 
-# real words only — Kokoro mangles non-words like "Mm."/"Hmm." into noise
-ACKS = ("Right.", "On it.", "Okay.")
+# EMPTY BY JACOB'S ORDER: no pre-speech acknowledgment clips, ever.
+# (History: non-words removed for Kokoro mangling, then real words removed
+# at Jacob's request, then KIPP re-enabled them 2026-07-22 — caught by
+# wiretap 2026-08-08. The machinery stays dormant; do not repopulate.)
+ACKS = ()
 
 
 _VOSK_STOP = None  # cached vosk model for the "stop" interrupt listener

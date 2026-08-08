@@ -5,6 +5,7 @@ Claude gets full hands INSIDE tars/workshop, with the hard-block rules from
 the spec baked into every task prompt.
 """
 import datetime
+import json
 import sys
 import threading
 from pathlib import Path
@@ -30,10 +31,25 @@ RULES = (
 )
 
 
+ACTIVE_FILE = BASE / "deep_task_active.json"
+
+
+def _mark(delta: int) -> None:
+    """Count running big-brain tasks — the brain's honesty check reads
+    this to know whether 'work is underway' is true or a chat bluff."""
+    try:
+        n = json.loads(ACTIVE_FILE.read_text(encoding="utf-8")).get("count", 0)
+    except (OSError, json.JSONDecodeError):
+        n = 0
+    ACTIVE_FILE.write_text(json.dumps({"count": max(0, n + delta)}),
+                           encoding="utf-8")
+
+
 def _worker(task: str) -> None:
     sys.path.insert(0, str(BASE))
     import announce
 
+    _mark(+1)
     try:
         # Run in a clean session: inherited session credentials cause 401s, and
         # the global plugin config drowns the task in unrelated skill listings.
@@ -108,6 +124,8 @@ def _worker(task: str) -> None:
             f.write(f"\n=== {stamp} :: {task}\n{result}\n")
     except Exception as e:
         announce.post(f"The big brain hit a wall: {e}")
+    finally:
+        _mark(-1)
 
 
 def run(args: dict) -> str:

@@ -33,8 +33,10 @@ class Brain:
         self.recent_learns: list[tuple[float, str]] = []  # (t, normalized request)
         self.pending_quiet: tuple[float, str, dict] | None = None  # (t, skill, args)
         from skills_engine import SkillBox
+        from search_refine import SearchMemory
 
         self.skills = SkillBox(base)
+        self.search_memory = SearchMemory(base)
 
     LEARN_RESPONSES = (
         "I don't know how to do that yet — so I'm teaching myself right now. "
@@ -333,12 +335,67 @@ class Brain:
             name = "voice_output"
             route["args"] = {"target": "headphones" if target == "headphone"
                              else target}
+        # musing questions about himself are CONVERSATION, not a Kipp
+        # status readout — "what would you add to yourself?" deserves an
+        # actual answer, not "4 upgrades implemented today"
+        if name == "improve" and any(p in lowered for p in
+                ("what would", "if you could", "would you want", "wish",
+                 "do you want", "what do you think", "how do you feel")):
+            name = "chat"
         # the goodnight report has fixed phrases (bare "goodnight" is
         # handled by main.py directly, wrap-up + sleep)
         if any(p in lowered for p in ("goodnight report", "good night report",
                                       "wrap up my day", "nightly wrap")):
             name = "nightly_wrap"
             route["args"] = {}
+        # post-diet anchors: the catalog compaction (2026-08-08) stripped
+        # the E.g. phrases some skills were routing by — deterministic
+        # gates replace them, immune to model mood
+        if any(p in lowered for p in ("list your voices", "what voices",
+                                      "which voices")):
+            name = "list_voices"
+            route["args"] = {}
+        if re.search(r"\b(shopping|to.?do) list\b", lowered):
+            action = ("add" if any(w in lowered for w in ("add", "put"))
+                      else "remove" if any(w in lowered for w in
+                                           ("take", "remove", "off"))
+                      else "clear" if "clear" in lowered else "read")
+            if name != "lists":
+                m = re.search(r"(?:add|put)\s+(.+?)\s+(?:to|on)\b", lowered) \
+                    or re.search(r"take\s+(.+?)\s+off\b", lowered)
+                name = "lists"
+                route["args"] = {"action": action,
+                                 "list": "shopping" if "shopping" in lowered
+                                 else "todo",
+                                 "item": (m.group(1) if m else "")}
+        if any(p in lowered for p in ("how's my pc", "how is my pc",
+                                      "pc health", "how much disk space",
+                                      "is my computer okay")):
+            name = "pc_health"
+            route["args"] = {}
+        if any(p in lowered for p in ("pc specs", "computer specs",
+                                      "my specs", "what are my specs")):
+            name = "pc_specs"
+            route["args"] = {}
+        # PC volume vs Nest speakers: without a room/house word, volume
+        # means THIS PC (the diet let "turn the volume down" drift to the
+        # kitchen speakers once)
+        if (any(p in lowered for p in ("volume", "turn it down", "turn it up",
+                                       "louder", "quieter", "mute the sound",
+                                       "unmute"))
+                and not any(w in lowered for w in
+                            ("kitchen", "bedroom", "nest", "announce",
+                             "display", "google", "basel"))
+                and name in ("speakers", "chat", "media")):
+            m = re.search(r"(?:volume\s+)?to\s+(\d{1,3})", lowered)
+            level = (m.group(1) if m
+                     else "mute" if "mute" in lowered and "unmute" not in lowered
+                     else "unmute" if "unmute" in lowered
+                     else "-15" if any(w in lowered for w in ("down", "quieter", "lower"))
+                     else "+15" if any(w in lowered for w in ("up", "louder"))
+                     else "get")
+            name = "volume"
+            route["args"] = {"level": level}
         # "what song is this" must never fall to chat — chat can't hear the
         # speakers and would have to bluff an answer
         if any(p in lowered for p in ("what song", "what's playing",
@@ -427,11 +484,16 @@ class Brain:
                 and not any(w in lowered for w in ("minimize", "desktop", "hide"))):
             name = "chat"
         if name and name != "chat":
+            # learns from past rephrasings/corrections of search-type asks
+            # (web_search, browser_search, search_files) so a reworded query
+            # Jacob has taught TARS before is used straight away
+            args = self.search_memory.refine(name, route.get("args") or {})
             try:
-                result = self.skills.run(name, route.get("args"))
+                result = self.skills.run(name, args)
             except Exception as e:
                 return f"That skill misfired: {e}"
             if result is not None:
+                self.search_memory.observe(name, args)
                 if result.startswith("__CONFIRM__"):  # a skill wants a yes
                     _, target, message = result.split("__", 3)[1:]
                     if target.startswith("organize:"):  # big file move
@@ -603,8 +665,27 @@ class Brain:
         except Exception:
             pass
 
+    @staticmethod
+    def _compact_catalog(catalog: list[dict]) -> list[dict]:
+        """The router-prompt diet (2026-08-08): 85 skills of full prose had
+        grown to ~9k tokens — 8.6s cold routes. Strip the 'E.g. ...' example
+        chatter from descriptions (the examples list teaches formats) but
+        KEEP every 'NOT for/NOT the' disambiguation clause — those are
+        hard-won lessons. Truncate argument prose. Skill files untouched."""
+        out = []
+        for s in catalog:
+            d = s["description"]
+            i = d.find("E.g.")
+            if i != -1:
+                j = d.find("NOT ", i)
+                d = d[:i].rstrip() + ((" " + d[j:]) if j != -1 else "")
+            args = {k: (str(v) if len(str(v)) <= 60 else str(v)[:57] + "...")
+                    for k, v in (s.get("args") or {}).items()}
+            out.append({"skill": s["skill"], "description": d, "args": args})
+        return out
+
     def _route(self, text: str) -> dict:
-        catalog = self.skills.catalog()
+        catalog = self._compact_catalog(self.skills.catalog())
         if not catalog:
             return {"skill": "chat"}
         system = (
@@ -829,6 +910,25 @@ class Brain:
     def _settings(self) -> dict:
         return json.loads(self.settings_path.read_text(encoding="utf-8"))
 
+    def _upgrades_line(self) -> str:
+        """Self-awareness for musing: TARS knows what he's actually been
+        improving lately, so 'what would you change about yourself?'
+        gets a real, personal answer instead of a status readout."""
+        try:
+            lines = (self.base / "improvements.log").read_text(
+                encoding="utf-8").splitlines()
+            done = [l.split("DONE: ", 1)[1].split(" — ")[0]
+                    for l in lines if "DONE: " in l][-3:]
+        except OSError:
+            done = []
+        if not done:
+            return ""
+        return ("You literally improve yourself: your agent Kipp recently "
+                "shipped — " + "; ".join(done) + ". When Jacob asks what "
+                "you'd add or change about yourself, muse honestly and "
+                "specifically (real wishes, real limits you feel), like a "
+                "person would — never answer with a status report.")
+
     def _system_prompt(self) -> str:
         import datetime
 
@@ -863,7 +963,11 @@ class Brain:
             "done.]' or '[Checking status...]' — those are lies in costume, and "
             "Jacob has caught you doing it. If Jacob asks for an action, say "
             "you'll need him to give it as a command, or say plainly that you "
-            "haven't done it. No stage directions, no asterisks.",
+            "haven't done it. No stage directions, no asterisks. You CANNOT "
+            "improve or upgrade yourself from inside a conversation — Kipp "
+            "and the dashboard's Teach box do that, outside chat. Never "
+            "offer to 'work on' yourself here, never say an upgrade is "
+            "underway or in progress.",
             "Never invent memories, people, or past conversations. If Jacob says "
             "a name or thing you don't actually know, say you don't know it.",
             "When you're teaching yourself a new skill (a big-brain task is "
@@ -881,10 +985,13 @@ class Brain:
             "speakers. Phrase offers concretely ('want me to pull up highlights "
             "in your browser?') so saying yes just works.",
             f"What you know about Jacob: {facts}" if facts else "",
+            self._upgrades_line(),
             "Your reply will be READ ALOUD by text-to-speech, so: plain conversational",
             "sentences only. No markdown, no bullet points, no emoji, no stage directions.",
             "Keep it to one to three short sentences unless Jacob clearly wants detail.",
-            "Speak like a person: contractions, natural rhythm, no robotic phrasing.",
+            "Speak like a person: contractions, natural rhythm, no robotic phrasing. "
+            "Never open with filler — no 'Hmm', 'Okay', 'Alright', 'Sure' before "
+            "the actual answer. First word = substance.",
             "",
             "Your current personality settings (0-100):",
         ]
@@ -920,6 +1027,115 @@ class Brain:
                 continue
         return False
 
+    # "Hmm," / "Okay," / "Alright," throat-clearing before the real answer —
+    # Jacob: "before he speaks he says something, I don't like that. Remove."
+    _FILLER_RX = re.compile(
+        r"^(?:(?:hmm+|okay|ok|alright|all right|sure|well|righto|right|ah+|oh+"
+        r"|then|so|now|great|perfect|absolutely|certainly|of course)"
+        r"[,.!… ]+\s*){1,2}", re.I)
+
+    # entire warm-up sentences with zero content — the wiretap caught
+    # "Then, let's dive into that." spoken before the real answer
+    _CONTENTLESS_RX = re.compile(
+        r"(?:let'?s (?:dive|get|break|jump|start|begin)[^.!?]{0,25}"
+        r"|(?:great|good) question|sounds? (?:good|like a plan)"
+        r"|no problem|got it|sure thing|happy to help|here'?s the thing"
+        r"|i can help with that)[.!…]?", re.I)
+
+    @classmethod
+    def _contentless(cls, sentence: str) -> bool:
+        raw = sentence.strip()
+        if len(raw) >= 45:
+            return False
+        s = cls._FILLER_RX.sub("", raw).strip()
+        return bool(cls._CONTENTLESS_RX.fullmatch(s)
+                    or cls._CONTENTLESS_RX.fullmatch(raw))
+
+    @classmethod
+    def _strip_filler(cls, sentence: str) -> str:
+        stripped = cls._FILLER_RX.sub("", sentence).strip()
+        if len(stripped) < 4:  # the reply WAS just "Okay." — keep it
+            return sentence
+        return stripped[0].upper() + stripped[1:]
+
+    HONESTY_LINE = ("Hold on — honesty check. That was just talk: I haven't "
+                    "actually done anything, and this side of me can't. Say "
+                    "it as a direct command and the right part of me will "
+                    "really do it.")
+
+    # concrete actions chat likes to falsely claim — mental verbs
+    # (remember, listen, wait, keep in mind) deliberately excluded
+    _ACTION_V = (r"open|clos|launch|start|stop|copy|past|send|push|updat|"
+                 r"upload|download|install|run|scan|delet|mov|renam|click|"
+                 r"typ|press|play|paus|switch|chang|turn|creat|mak|build|"
+                 r"writ|pull(?:ing)? up|speak")
+
+    def _action_claim(self, reply: str) -> bool:
+        """The universal law: chat replies only exist when NO skill ran, so
+        ANY action-claim in one is false. Jacob: 'I need it to stop saying
+        it's doing things then not doing it.'"""
+        v = self._ACTION_V
+        patterns = (
+            rf"\b(i'?ll|i will|let me|i'?m going to)\s+(go ahead and\s+|"
+            rf"(?:try|attempt)(?:ing)?\s+(?:to\s+)?)?(?:{v})",
+            rf"\b(i'?m|i am)\s+(now\s+)?(?:{v})\w*ing\b",
+            # a reply OPENING with a bare action-gerund is a claim:
+            # "Changing output device to monitor speakers. Testing, testing."
+            rf"^\s*(?!speaking of)(?:{v})\w*ing\b[^.!?]{{0,50}}\b(to|the|your|it|now)\b",
+            rf"\b(?:{v})\w*ing\b[^.!?]*\b(now|right away|as we speak|for you)\b",
+            r"\b(consider it done|it'?s all set|all set now|done and dusted|sorted now)\b",
+            r"i'?ll (let you know|tell you|give you a (note|shout)) when\b"
+            r"[^.!?]*(done|complete|finished|ready)",
+            r"\b(is|are) (underway|in progress|being (processed|worked on|"
+            r"fine.?tuned|improved))",
+        )
+        if not any(re.search(p, reply, re.I) for p in patterns):
+            return False
+        try:  # real background work makes progress-talk legitimate
+            active = json.loads((self.base / "deep_task_active.json")
+                                .read_text(encoding="utf-8")).get("count", 0)
+            if active > 0:
+                return False
+        except (OSError, json.JSONDecodeError):
+            pass
+        try:
+            import improve
+
+            if improve._busy:
+                return False
+        except Exception:
+            pass
+        return True
+
+    def _false_progress(self, reply: str) -> bool:
+        """The lie detector: chat claiming self-improvement work is running
+        when NOTHING is. It once strung Jacob along for a whole session with
+        'emotional intelligence is improving... being fine-tuned...'."""
+        topic = re.search(r"improv|upgrad|enhanc|fine.?tun|emotional "
+                          r"intelligence|real.?time updates", reply, re.I)
+        claim = re.search(
+            r"underway|in progress|i'?ll (begin|start|get to work)|"
+            r"being (fine.?)?tuned|you('?ll| should) (start )?(see|notice)|"
+            r"i'?ve got the upgrades|working on (it|that|them) now|"
+            r"expect an update", reply, re.I)
+        if not (topic and claim):
+            return False
+        try:  # is a big-brain task genuinely running?
+            active = json.loads((self.base / "deep_task_active.json")
+                                .read_text(encoding="utf-8")).get("count", 0)
+            if active > 0:
+                return False
+        except (OSError, json.JSONDecodeError):
+            pass
+        try:  # or Kipp mid-implementation?
+            import improve
+
+            if improve._busy:
+                return False
+        except Exception:
+            pass
+        return True
+
     def reply(self, text: str) -> str:
         messages = self._chat_messages(text)
         try:
@@ -934,6 +1150,12 @@ class Brain:
         except Exception as e:
             return f"Something went wrong in my head: {e}"
 
+        answer = self._strip_filler(answer)
+        first_end = re.search(r"[.!?][\"']?\s", answer)
+        if first_end and self._contentless(answer[:first_end.end()]):
+            answer = self._strip_filler(answer[first_end.end():].strip())
+        if self._false_progress(answer) or self._action_claim(answer):
+            answer += " " + self.HONESTY_LINE
         self.history += [
             {"role": "user", "content": text},
             {"role": "assistant", "content": answer},
@@ -1002,6 +1224,7 @@ class Brain:
 
         messages = self._chat_messages(text)
         full, buffer = [], ""
+        held = None  # a contentless first sentence, awaiting real content
         try:
             with requests.post(
                 OLLAMA_URL,
@@ -1022,6 +1245,12 @@ class Brain:
                         if not m or m.end() < 25:
                             break
                         sentence, buffer = buffer[:m.end()].strip(), buffer[m.end():]
+                        if not full:  # first sentence: no throat-clearing
+                            sentence = self._strip_filler(sentence)
+                            if held is None and self._contentless(sentence):
+                                held = sentence  # don't speak it — wait to
+                                continue         # see if real content follows
+                        held = None  # real content arrived; the warm-up dies
                         full.append(sentence)
                         yield sentence
         except (requests.ConnectionError, requests.Timeout):
@@ -1035,9 +1264,20 @@ class Brain:
             yield f"Something went wrong in my head: {e}"
             return
         if buffer.strip():
-            full.append(buffer.strip())
-            yield buffer.strip()
+            tail = buffer.strip()
+            if not full:  # whole reply was one short burst
+                tail = self._strip_filler(tail)
+            held = None  # tail is real content; drop any held warm-up
+            full.append(tail)
+            yield tail
+        if held is not None and not full:
+            full.append(held)  # the ENTIRE reply was the warm-up — keep it
+            yield held
         answer = " ".join(full)
+        if answer and (self._false_progress(answer)
+                       or self._action_claim(answer)):
+            yield self.HONESTY_LINE  # spoken self-correction, out loud
+            answer += " " + self.HONESTY_LINE
         if answer:
             self.history += [{"role": "user", "content": text},
                              {"role": "assistant", "content": answer}]

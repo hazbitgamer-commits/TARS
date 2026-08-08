@@ -426,16 +426,15 @@ def main() -> None:
                     stream.start()
                     break
 
-                # a quick "Right." / "On it." fills the routing silence, so
-                # Jacob knows he was heard instead of repeating the command
-                ack_thread = threading.Thread(target=speaker.ack, daemon=True)
-                ack_thread.start()
+                # JACOB'S STANDING ORDER (2026-08-08): NO spoken sounds
+                # before the reply — no "Okay."/"Right."/"On it.", ever.
+                # Kipp re-added an ack here once ("confirmation step",
+                # 2026-07-22) and it took a wiretap to catch. Do not re-add.
                 gen = brain.handle_stream(text)
                 try:
                     first = next(gen)  # brain starts thinking here
                 except StopIteration:
                     first = None
-                ack_thread.join(timeout=2)
                 if first is None:
                     break
 
