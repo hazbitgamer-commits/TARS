@@ -107,6 +107,33 @@ check("Wake word (Vosk)", vosk_model)
 check("Voice (Kokoro)", kokoro_files)
 check("Hearing (Whisper)", whisper_lib)
 check("Microphone", microphone)
+
+
+def beep_then_listen():
+    """The wake sequence in miniature: play a beep, then immediately
+    record — if the after-beep level collapses, the Mac is stalling the
+    mic when output plays (the 'beeps but doesn't listen' bug)."""
+    import numpy as np
+    import sounddevice as sd
+
+    import audio_out
+
+    idx = audio_out.pick_input()
+    t = np.linspace(0, 0.15, int(44100 * 0.15), False)
+    tone = (0.3 * np.sin(2 * np.pi * 880 * t)).astype(np.float32)
+    sd.play(tone, 44100)
+    sd.wait()
+    rec = sd.rec(int(16000 * 2.5), samplerate=16000, channels=1,
+                 dtype="float32", device=idx)
+    sd.wait()
+    rms = float(np.sqrt(np.mean(rec ** 2)))
+    if rms < 0.0005:
+        raise RuntimeError(f"mic DEAD right after a beep (level {rms:.5f}) "
+                           "— the Mac stalls input during output")
+    return f"mic alive after beep, level {rms:.4f} (talk during this test)"
+
+
+check("Listen-after-beep", beep_then_listen)
 check("Speaker output", speak_test)
 print()
 for ok, name, detail in RESULTS:

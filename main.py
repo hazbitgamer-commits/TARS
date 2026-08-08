@@ -120,6 +120,12 @@ def ambient_threshold(stream, agc: AutoGain) -> float:
         chunks.append(agc.process(np.frombuffer(bytes(data), dtype=np.int16)))
     ambient = np.concatenate(chunks).astype(np.float32) / 32768.0
     rms = float(np.sqrt(np.mean(ambient**2)))
+    import sys as _sys
+
+    if _sys.platform != "win32":
+        # MacBook mics run quieter than the LifeCam — a gentler gate, or
+        # speech never crosses the line (wake heard, commands ignored)
+        return max(rms * 2.0, 0.003)
     return max(rms * 2.5, 0.005)
 
 
@@ -316,7 +322,17 @@ def main() -> None:
                 input("\n[Enter] to talk: ")
                 stream.start()
 
-            beep()
+            import sys as _sys
+
+            if _sys.platform != "win32":
+                # Macs stall the INPUT stream when output plays over it —
+                # the mate's TARS beeped then went deaf. Cycle the mic
+                # around the beep so listening restarts clean.
+                stream.stop()
+                beep()
+                stream.start()
+            else:
+                beep()
 
             # --- asleep: only "wake up" gets a reaction ---
             if asleep:
