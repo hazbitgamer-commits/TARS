@@ -153,8 +153,14 @@ class Speaker:
         """While TARS talks, a tiny keyword-spotter listens for 'stop'.
         Returns a disarm() callable. Fails safe: no listener, no harm."""
         import json as _json
+        import sys as _sys
         import threading
 
+        if _sys.platform != "win32":
+            # Mac Lite: a second live mic stream during playback stuttered
+            # the mate's speech badly (worse when Continuity grabbed the
+            # iPhone). No "stop" interrupt off-Windows until proven safe.
+            return lambda: None
         global _VOSK_STOP
         try:
             from pathlib import Path

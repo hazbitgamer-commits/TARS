@@ -46,19 +46,32 @@ def set_output(target: str) -> str | None:
 
 
 MIC_PREFER = ("hd-3000", "desktop microphone")  # the LifeCam — never a gamepad
+# Mac: the built-in mic, NEVER the iPhone — macOS Continuity offers the
+# phone as a wireless mic and grabbing it wrecks audio (glitchy speech,
+# deaf wake word — the mate's MacBook found this the hard way)
+MIC_PREFER_MAC = ("macbook", "built-in", "internal")
+MIC_EXCLUDE_MAC = ("iphone", "ipad", "continuity")
 
 
 def pick_input() -> int | None:
-    """The index of the mic TARS should use — pinned to the LifeCam, so a
-    freshly connected DualSense/headset can't hijack the default input."""
+    """The index of the mic TARS should use — pinned per platform, so a
+    freshly connected DualSense (or a Continuity iPhone) can't hijack it."""
+    import sys
+
+    on_mac_like = sys.platform != "win32"
+    prefer = MIC_PREFER_MAC if on_mac_like else MIC_PREFER
     candidates = []
     for i, d in enumerate(sd.query_devices()):
-        if d["max_input_channels"] <= 0 or d["hostapi"] != 0:
+        if d["max_input_channels"] <= 0:
+            continue
+        if not on_mac_like and d["hostapi"] != 0:
             continue
         low = d["name"].lower()
         if any(j in low for j in VIRTUAL_JUNK) or "sound mapper" in low:
             continue
-        if any(f in low for f in MIC_PREFER):
+        if on_mac_like and any(j in low for j in MIC_EXCLUDE_MAC):
+            continue
+        if any(f in low for f in prefer):
             return i
         if "dualsense" not in low and "oculus" not in low:
             candidates.append(i)

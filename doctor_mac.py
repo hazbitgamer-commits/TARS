@@ -61,6 +61,9 @@ def microphone():
 
     import audio_out
 
+    all_inputs = [f"{i}:{d['name'][:30]}" for i, d in
+                  enumerate(sd.query_devices()) if d["max_input_channels"] > 0]
+    print(f"        (all input devices: {'; '.join(all_inputs)})")
     idx = audio_out.pick_input()
     name = sd.query_devices()[idx]["name"] if idx is not None else "(default)"
     for rate in (16000, 48000, 44100):
