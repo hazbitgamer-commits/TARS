@@ -8,7 +8,8 @@ import requests
 
 BASE = Path(__file__).resolve().parents[2]
 OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
-MODEL = "qwen3:8b"
+from platform_caps import bg_model
+MODEL = bg_model()
 
 DESCRIPTION = ("Spoken recap of Jacob's day with TARS — 'what did I do "
                "today', 'recap my day', 'what happened today'. Summarizes "

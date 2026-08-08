@@ -40,6 +40,24 @@ def blocked_skills() -> set:
     return BLOCKED_OFF_WINDOWS if LITE else set()
 
 
+CHAT_MODEL = "qwen2.5:7b"
+
+
+def bg_model() -> str:
+    """Background-thinking model. Windows (16GB GPU) affords the smarter
+    qwen3:8b as a third resident model; Lite machines (MacBook unified
+    memory) reuse the ONE chat model — three residents at once swamped an
+    M4 into system-wide lag."""
+    return CHAT_MODEL if LITE else "qwen3:8b"
+
+
+def router_model() -> str:
+    """Windows runs a second instance of the chat model so router and chat
+    keep separate prompt caches (2x latency win there). On Lite, one
+    instance for both — Apple silicon reprocesses prompts fast enough."""
+    return CHAT_MODEL if LITE else "qwen2.5:7b-router"
+
+
 def python_cmd(base: Path | None = None) -> str:
     """The right Python for running/testing code on THIS platform —
     Windows uses TARS's private runtime, elsewhere it's whatever

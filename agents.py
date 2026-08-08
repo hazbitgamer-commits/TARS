@@ -20,7 +20,8 @@ BASE = Path(__file__).parent
 STATE = BASE / "agents_state.json"
 ACTIVITY = BASE / "brain_activity.jsonl"
 OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
-MODEL = "qwen3:8b"
+from platform_caps import bg_model
+MODEL = bg_model()
 
 AGENTS = {
     "Scout": "gathers the morning briefing: weather, unread email, calendar, timers",

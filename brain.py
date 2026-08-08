@@ -15,8 +15,11 @@ import requests
 
 OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
 MODEL = "qwen2.5:7b"        # conversation
-ROUTER_MODEL = "qwen2.5:7b-router"  # same weights, separate instance: router and
-# chat each keep their own prompt cache (sharing one instance doubled latency)
+from platform_caps import router_model as _router_model
+
+ROUTER_MODEL = _router_model()  # Windows: separate instance (router and
+# chat each keep their own prompt cache — sharing doubled latency there).
+# Lite/Mac: the SAME instance — a second resident 7B swamped an M4.
 KEEP_ALIVE = "2h"  # keep models loaded in memory between commands
 HISTORY_TURNS = 10  # remembered exchanges within a session
 
@@ -542,7 +545,9 @@ class Brain:
         except OSError:
             pass
 
-    BG_MODEL = "qwen3:8b"  # the smarter model handles offline thinking
+    from platform_caps import bg_model as _bg
+
+    BG_MODEL = _bg()  # Windows: smarter qwen3:8b; Lite: reuse the one model
 
     # talk ABOUT TARS/this project is work chatter, never a life fact —
     # "clean up the 3d obsidian brain" kept becoming a "memory"

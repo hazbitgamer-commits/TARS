@@ -31,8 +31,7 @@ Then start TARS any time with:
 <details><summary>Manual steps (if you'd rather do it piece by piece)</summary>
 
 1. Install Ollama from https://ollama.com/download/mac, then:
-   `ollama pull qwen2.5:7b`, `ollama cp qwen2.5:7b qwen2.5:7b-router`,
-   `ollama pull qwen3:8b`
+   `ollama pull qwen2.5:7b` (Lite runs one model for everything)
 2. `git clone https://github.com/hazbitgamer-commits/TARS.git && cd TARS`
 3. `bash setup_mac.sh`
 4. `bash tars_mac.sh`

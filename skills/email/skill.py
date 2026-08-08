@@ -23,7 +23,8 @@ NOT_CONNECTED = ("Google isn't connected yet — the setup steps are in the read
                  "or ask Claude to walk you through it.")
 
 OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
-MODEL = "qwen3:8b"
+from platform_caps import bg_model
+MODEL = bg_model()
 
 
 def _svc():

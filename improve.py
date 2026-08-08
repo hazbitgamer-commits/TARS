@@ -31,7 +31,8 @@ STATE_FILE = BASE / "improve_state.json"
 LOG_FILE = BASE / "improvements.log"
 LAST_GOOD = BASE / "backups" / "last_good"
 OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
-MODEL = "qwen3:8b"
+from platform_caps import bg_model
+MODEL = bg_model()
 
 IDLE_BEFORE_WORK = 10 * 60   # only self-improve after 10 quiet minutes
 REFLECT_GAP = 15 * 60        # think about the transcripts at most every 15 min

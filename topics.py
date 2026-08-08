@@ -9,7 +9,8 @@ import requests
 
 BASE = Path(__file__).parent
 OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
-MODEL = "qwen3:8b"
+from platform_caps import bg_model
+MODEL = bg_model()
 
 
 def _clean(title: str) -> str:

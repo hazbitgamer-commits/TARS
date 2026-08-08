@@ -45,11 +45,10 @@ for i in $(seq 1 30); do
   sleep 2
 done
 
-# 3. the AI models (~10 GB — the long part, go make a coffee)
-echo "-- downloading TARS's brain models (this is the big download)"
+# 3. the AI model (~4.7 GB — the long part, go make a coffee)
+# Lite runs ONE model for everything — leaner on a MacBook's memory
+echo "-- downloading TARS's brain model (this is the big download)"
 "$OLLAMA_BIN" pull qwen2.5:7b
-"$OLLAMA_BIN" cp qwen2.5:7b qwen2.5:7b-router 2>/dev/null || true
-"$OLLAMA_BIN" pull qwen3:8b
 
 # 4. Python environment + voice/hearing models
 bash setup_mac.sh

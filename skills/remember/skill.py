@@ -8,7 +8,8 @@ import requests
 
 VAULT = Path(__file__).resolve().parents[2] / "vault"
 OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
-MODEL = "qwen3:8b"
+from platform_caps import bg_model
+MODEL = bg_model()
 
 DESCRIPTION = ("Save a fact to TARS's permanent memory vault. E.g. 'remember that I like "
                "short answers in the morning', 'remember my wifi password is on the fridge'.")
