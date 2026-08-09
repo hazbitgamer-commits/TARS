@@ -324,7 +324,10 @@ def main() -> None:
                         import game_watch
                         import proactive
 
+                        import routine_watch
+
                         game_watch.tick()  # session buddy + gaming flag
+                        routine_watch.tick()  # routines that fire themselves
                         proactive.tick()   # calendar heads-ups, rules-gated
                         for announcement in timers_watch.pop_due() + announce.pop():
                             print(f"TARS: {announcement}")
@@ -373,6 +376,7 @@ def main() -> None:
             in_conversation = True
             first_turn = True
             convo: list[str] = []
+            last_command_norm = None  # catch back-to-back identical commands
             while in_conversation:
                 set_state("listening")
                 wait = WAIT_FOR_SPEECH_SEC if first_turn else FOLLOWUP_SEC
@@ -478,6 +482,23 @@ def main() -> None:
                     speaker.say("Righto.")
                     stream.start()
                     break
+
+                # if Jacob just said the exact same thing again, don't run it
+                # twice blind — the repeat almost always means TARS missed it
+                # the first time, not that he wants a second run.
+                norm = text.strip().lower().rstrip(".!? ")
+                if norm and norm == last_command_norm:
+                    set_state("speaking")
+                    stream.stop()
+                    speaker.say("That's the same thing again — did I miss "
+                                "it, or did you mean something else?")
+                    stream.start()
+                    log("said", "(repeated command caught)")
+                    convo.append("TARS: (repeated command caught)")
+                    last_command_norm = None
+                    first_turn = False
+                    continue
+                last_command_norm = norm
 
                 # JACOB'S STANDING ORDER (2026-08-08): NO spoken sounds
                 # before the reply — no "Okay."/"Right."/"On it.", ever.

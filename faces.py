@@ -182,7 +182,29 @@ def enroll(name: str, frame=None, which: str = "") -> str:
         note.write_text(f"---\ncreated: {today}\ntags:\n  - person\n---\n\n"
                         f"- TARS learned {name}'s face on {today} *(photo in faces\\{name}.jpg)*\n",
                         encoding="utf-8")
-    return f"Got it — I'll recognise {name} now.{extra}"
+    try:  # remember who was last learned, so "no, wrong name" can undo it
+        LAST_LEARNED.write_text(name, encoding="utf-8")
+    except OSError:
+        pass
+    return (f"Got it — I'll recognise {name} now.{extra} "
+            f"If I misheard the name, say: no, wrong name.")
+
+
+LAST_LEARNED = BASE / "faces" / "last_learned.txt"
+
+
+def undo_last() -> str:
+    """'No, wrong name' — undo the most recent enrolment. Speech mishears
+    names ("Dad" for something else), and a phantom person is worse than
+    no person."""
+    try:
+        name = LAST_LEARNED.read_text(encoding="utf-8").strip()
+    except OSError:
+        return "I haven't learned a face recently enough to undo."
+    if not name:
+        return "I haven't learned a face recently enough to undo."
+    LAST_LEARNED.write_text("", encoding="utf-8")
+    return forget(name).replace("Forgotten", "Undone — forgotten")
 
 
 def known_names() -> list[str]:

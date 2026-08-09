@@ -281,6 +281,24 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 data = '{"proposals": []}'
             self._send(200, data.encode(), "application/json")
+        elif route == "/api/routines":
+            try:
+                import importlib.util
+
+                spec = importlib.util.spec_from_file_location(
+                    "routines_skill", BASE / "skills" / "routines" / "skill.py")
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                data = [{"name": n,
+                         "when": (e.get("when") or {}).get("at")
+                         or ((e.get("when") or {}).get("type") == "game"
+                             and "on game start") or "",
+                         "steps": len(e.get("steps", []))}
+                        for n, e in mod._load().items()]
+            except Exception:
+                data = []
+            self._send(200, json.dumps({"routines": data}).encode(),
+                       "application/json")
         elif route == "/api/designs":
             out = []
             ddir = BASE / "workshop" / "designs"
@@ -426,6 +444,18 @@ class Handler(BaseHTTPRequestHandler):
                                     data.get("decision") == "build")
                 self._send(200 if ok else 404,
                            json.dumps({"ok": ok}).encode(), "application/json")
+            except Exception:
+                self._send(500, b'{"ok": false}', "application/json")
+        elif self.path == "/api/routines/run":
+            length = int(self.headers.get("Content-Length", 0))
+            data = json.loads(self.rfile.read(length))
+            try:
+                from skills_engine import SkillBox
+
+                said = SkillBox(BASE).run("routines", {
+                    "name": str(data.get("name", "")), "action": "run"})
+                self._send(200, json.dumps({"ok": True, "said": said}).encode(),
+                           "application/json")
             except Exception:
                 self._send(500, b'{"ok": false}', "application/json")
         elif self.path == "/api/designs/open":

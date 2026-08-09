@@ -115,10 +115,17 @@ def run(args: dict) -> str:
         os.startfile(candidate)
         return f"Opening {candidate.name}."
 
-    if "." in target and " " not in target:  # looks like a website
+    # a website needs a REAL domain ending — "notepad.exe" is a program,
+    # and treating it as a URL once opened Notepad in the browser
+    TLDS = (".com", ".net", ".org", ".io", ".au", ".uk", ".dev", ".co",
+            ".app", ".ai", ".gg", ".tv", ".me", ".info", ".edu", ".gov")
+    if target.startswith("http") or (
+            " " not in target and target.lower().split("/")[0].endswith(TLDS)):
         url = target if target.startswith("http") else "https://" + target
         os.startfile(url)
         return f"Opening {target}."
+    if target.lower().endswith((".exe", ".app", ".lnk")):
+        target = target.rsplit(".", 1)[0]  # "notepad.exe" → "notepad"
 
     cleaned = target.replace("my ", "").replace(" folder", "").strip()
     if cleaned in FOLDERS:

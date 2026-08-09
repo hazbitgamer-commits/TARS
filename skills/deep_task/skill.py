@@ -35,13 +35,23 @@ ACTIVE_FILE = BASE / "deep_task_active.json"
 
 
 def _mark(delta: int) -> None:
-    """Count running big-brain tasks — the brain's honesty check reads
-    this to know whether 'work is underway' is true or a chat bluff."""
+    """Track running big-brain tasks by START TIME — the brain's honesty
+    check reads this to know whether 'work is underway' is true or a chat
+    bluff. Timestamps (not a bare count) so a worker that dies without
+    decrementing can't leave the count stuck high forever, silently
+    disabling the lie detector — which is exactly what happened."""
+    import time as _t
+
     try:
-        n = json.loads(ACTIVE_FILE.read_text(encoding="utf-8")).get("count", 0)
+        data = json.loads(ACTIVE_FILE.read_text(encoding="utf-8"))
+        tasks = [t for t in data.get("tasks", []) if _t.time() - t < 1800]
     except (OSError, json.JSONDecodeError):
-        n = 0
-    ACTIVE_FILE.write_text(json.dumps({"count": max(0, n + delta)}),
+        tasks = []
+    if delta > 0:
+        tasks.append(_t.time())
+    elif tasks:
+        tasks.pop(0)
+    ACTIVE_FILE.write_text(json.dumps({"tasks": tasks, "count": len(tasks)}),
                            encoding="utf-8")
 
 

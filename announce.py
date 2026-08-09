@@ -16,6 +16,12 @@ def post(message: str, hold_during_quiet: bool = False) -> None:
     items.append({"text": message, "hold": True} if hold_during_quiet
                  else message)
     FILE.write_text(json.dumps(items, indent=1), encoding="utf-8")
+    try:  # follow Jacob to his phone, if he's turned /notify on
+        import tars_phone
+
+        tars_phone.send(message)
+    except Exception:
+        pass
 
 
 def pop() -> list[str]:

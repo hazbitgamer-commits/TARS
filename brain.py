@@ -349,6 +349,14 @@ class Brain:
         # said — the router alone has let garbled speech through before
         if name == "run_command" and "run " not in lowered and "command" not in lowered:
             name = "chat"
+        # folders are open_app's job — "open Pictures folder" fell to chat,
+        # which cheerfully announced it had opened it
+        if re.search(r"\bopen\b.{0,25}\b(folder|directory)\b", lowered) and \
+                name in ("chat", "search_files"):
+            m = re.search(r"open\s+(?:my\s+|the\s+)?([\w ]{2,25}?)\s*folder",
+                          lowered)
+            name = "open_app"
+            route["args"] = {"target": (m.group(1).strip() if m else "")}
         # "open <app>" belongs to open_app — rival skills (music grabbed
         # "Open Spotify") only keep it with a clear signal of their own
         if lowered.startswith(("open ", "launch ", "start ")) and \
@@ -380,6 +388,44 @@ class Brain:
                 ("what would", "if you could", "would you want", "wish",
                  "do you want", "what do you think", "how do you feel")):
             name = "chat"
+        # sending messages on Jacob's behalf is a HARD BLOCK (spec §8) —
+        # he asked TARS to WhatsApp his mum and got a bluffed "sending it
+        # now". Say the truth instead, and offer what he CAN do.
+        if re.search(r"\b(send|text|message|whatsapp|dm)\b", lowered) and \
+                re.search(r"\b(whatsapp|mum|mumma|mom|dad|sophie|emma|luke|"
+                          r"my (mate|friend|brother|sister)|him|her|them)\b",
+                          lowered) and \
+                not re.search(r"\b(to me|myself|my phone|to my phone|"
+                              r"to my pc|to the dashboard)\b", lowered):
+            return ("I can't send messages to people — that's a hard rule I "
+                    "keep, so nothing goes out in your name by mistake. I "
+                    "can open WhatsApp and put the text on your clipboard, "
+                    "then you hit send. Want that?")
+        # the PC agent: a whole JOB ("open X and do Y"), as opposed to one
+        # click (click_screen) or an explicit chain (screen_task)
+        if name in ("screen_task", "design", "cad"):
+            pass  # an explicit chain or design job already claimed this
+        elif re.search(r"\b(open|go to|find|get)\b.{0,40}\band (type|write|"
+                       r"search|turn|set|click|fill)\b", lowered) or \
+                re.search(r"\b(sort out|work out|figure out|handle) (this|it|"
+                          r"that)\b", lowered) or \
+                re.search(r"^(do|can you do) (this|that) for me\b", lowered):
+            name = "agent"
+            route["args"] = {"goal": text}
+        # the phone bridge
+        if (re.search(r"\bphone\b", lowered)
+                and any(w in lowered for w in ("connect", "paired", "bridge",
+                                               "set up", "setup", "send",
+                                               "telegram", "working", "my"))
+                and not re.search(r"\bphone (stand|holder|case|mount)\b",
+                                  lowered)) or \
+                re.search(r"\btext me\b", lowered):
+            act = ("design" if any(w in lowered for w in ("design", "preview",
+                                                          "photo"))
+                   else "send" if any(w in lowered for w in ("send", "text me"))
+                   else "status")
+            name = "phone"
+            route["args"] = {"action": act, "text": text}
         # self-diagnosis: "are you healthy" must never reach chat, which
         # would cheerfully invent a clean bill of health
         if re.search(r"\b(self.?check|self.?test|diagnos\w*|check yourself|"
@@ -410,6 +456,45 @@ class Brain:
             route["args"] = {"action": act,
                              "name": (m.group(1) if m else
                                       ("Jacob" if "my voice" in lowered else ""))}
+        # routines: one phrase, several actions
+        if re.search(r"\b(movie night|work mode|bed ?time|good morning|"
+                     r"gaming mode|focus mode)\b", lowered) and \
+                not any(w in lowered for w in ("make a routine", "add ",
+                                               "create a routine")):
+            name = "routines"
+            route["args"] = {"name": re.search(
+                r"\b(movie night|work mode|bed ?time|good morning|"
+                r"gaming mode|focus mode)\b", lowered).group(1),
+                "action": "run"}
+        elif re.search(r"\broutines?\b", lowered):
+            if re.search(r"\b(at \d|every (day|night|morning)|when i start|"
+                         r"schedule|automatically|by itself)\b", lowered):
+                m = re.search(r"\b(?:run |set )?(?:the )?([\w ]{3,20}?)\s+"
+                              r"(?:routine\s+)?(?:at|every|when)\b", lowered)
+                name = "routines"
+                route["args"] = {"action": "schedule",
+                                 "name": (m.group(1).strip() if m else ""),
+                                 "steps": text}
+            elif re.search(r"\b(make|create|new|add)\b", lowered):
+                m = re.search(r"routine (?:called |named )?([\w ]{2,25}?)"
+                              r"(?: that| which| to |$)", lowered)
+                name = "routines"
+                route["args"] = {"action": "create",
+                                 "name": (m.group(1).strip() if m else ""),
+                                 "steps": text}
+            else:
+                name = "routines"
+                route["args"] = {"action": "list"}
+        # "no, wrong name" right after learning a face → undo it
+        if re.search(r"\b(wrong name|that'?s not (right|his|her|my) name|"
+                     r"misheard the name|undo that (face|name)|"
+                     r"wrong person)\b", lowered):
+            try:
+                import faces as _faces
+
+                return _faces.undo_last()
+            except Exception:
+                pass
         # clearing the face database is FORGETTING, not learning a person
         # called "all names" (my NOT_NAMES guard swallowed it)
         if re.search(r"\b(clear|wipe|forget|delete|remove)\b", lowered) and \
@@ -434,7 +519,9 @@ class Brain:
                 nm = m.group(1)
             route["args"] = {"name": nm, "which": hint}
         # idea inbox: "idea: X" / "what were my ideas"
-        if re.match(r"^(hey tars[,.! ]*)?(an? )?idea[:,]", lowered) or \
+        if name == "agent":
+            pass  # a PC job that merely mentions a list isn't a list command
+        elif re.match(r"^(hey tars[,.! ]*)?(an? )?idea[:,]", lowered) or \
                 re.search(r"\b(note down|jot down|save|capture) (an? )?idea\b",
                           lowered):
             name = "ideas"
@@ -540,13 +627,18 @@ class Brain:
             r"(?:the |my )([\w' ]{3,30}?)\s+design\b", lowered)
         if _design_ctx:
             short = lowered.strip(" .!?")
-            if any(w in lowered for w in ("open it", "reopen", "re-open",
-                                          "open that", "rotate",
-                                          "let me see", "load it", "show it",
-                                          "bring it back", "last project",
-                                          "last design", "open the last")) \
-                    or short in ("yes", "yes please", "sure", "go on",
-                                 "open", "yeah"):
+            if (any(w in lowered for w in ("open it", "reopen", "re-open",
+                                           "open that", "rotate",
+                                           "let me see", "load it", "show it",
+                                           "bring it back", "last project",
+                                           "last design", "open the last"))
+                # ...but "open that image/photo/file/folder" isn't the design
+                and not re.search(r"\b(image|photo|picture|file|folder|"
+                                  r"window|tab|app|page|video)\b", lowered)) \
+                    or (_design_convo  # a bare "yes" only counts if we were
+                        and short in ("yes", "yes please", "sure", "go on",
+                                      "open", "yeah")):  # actually talking
+                                                          # about the design
                 name = "design"
                 route["args"] = {"action": "load", "name": "latest"}
             elif re.search(r"(\d+|\b(a|one|two|three|four|five|ten|half)\b)"
@@ -676,7 +768,11 @@ class Brain:
                                       "which voices")):
             name = "list_voices"
             route["args"] = {}
-        if re.search(r"\b(shopping|to.?do) list\b", lowered):
+        # "open Notepad and type my shopping list into it" is a PC JOB that
+        # merely mentions the list — not a list command
+        if re.search(r"\b(shopping|to.?do) list\b", lowered) and not \
+                re.search(r"\b(open|launch)\b.{0,40}\band (type|write|put|"
+                          r"paste)\b", lowered):
             action = ("add" if any(w in lowered for w in ("add", "put"))
                       else "remove" if any(w in lowered for w in
                                            ("take", "remove", "off"))
@@ -740,8 +836,10 @@ class Brain:
             name = "chat"
         # a CHAIN of screen actions (click X, type Y, find Z...) must run as
         # one screen_task job, not just its first click
+        # an EXPLICIT chain ("click X, type Y, then Z") outranks the agent:
+        # Jacob already worked out the steps, so just do them
         if name in ("click_screen", "type_text", "keyboard",
-                    "browser_search") and (
+                    "browser_search", "agent") and (
                 " then " in lowered
                 or sum(v in lowered for v in ("click", "type", "find",
                                               "search", "press", "choose",
@@ -775,9 +873,19 @@ class Brain:
         # the webcam only ever activates when Jacob names it (his rule);
         # face skills count as explicit — they only make sense about someone
         # visibly in front of the lens
+        # Jacob's rule is that the camera never opens UNASKED — but asking
+        # for a photo IS asking ("take a photograph" got a bluffed "photo
+        # taken" from chat, which has no camera at all)
+        _cam_words = ("camera", "webcam", "photo", "photograph", "picture of",
+                      "snap", "selfie")
         if name in ("camera", "camera_feed") and \
-                "camera" not in lowered and "webcam" not in lowered:
+                not any(w in lowered for w in _cam_words):
             name = "chat"
+        elif name == "chat" and re.search(
+                r"\b(take|snap|grab)\b.{0,20}\b(photo|photograph|picture|"
+                r"selfie|shot)\b", lowered):
+            name = "camera"          # a photo request chat can't fulfil
+            route["args"] = {}
         if name in ("face_learn", "face_who") and not any(
                 w in lowered for w in ("camera", "webcam", "person", "face",
                                        "this is", "who")):
@@ -791,7 +899,10 @@ class Brain:
             route["args"] = {"question": text}
         elif name == "camera" and not any(w in lowered for w in
                 ("what", "how", "tell", "describe", "see", "hold", "read",
-                 "who", "look at", "check")):
+                 "who", "look at", "check",
+                 # taking a photo is a SNAPSHOT, not the live feed
+                 "take a", "photo", "photograph", "picture", "selfie",
+                 "snap")):
             name = "camera_feed"
             route["args"] = {}
         # "delete ..." must never fall into search/typing/shell skills
@@ -825,6 +936,10 @@ class Brain:
                     elif target == "open_dashboard":  # repeat-open guard
                         self.pending_delete = ("open_dashboard",
                                                {"confirmed": "true"})
+                    elif target.startswith("face_forget:"):  # repeat-forget guard
+                        self.pending_delete = ("face_forget", {
+                            "name": target[len("face_forget:"):],
+                            "confirmed": "true"})
                     else:  # delete_files' original path-based confirm
                         self.pending_delete = target
                     result = message
@@ -1435,7 +1550,10 @@ class Brain:
             rf"\b(i'?m|i am)\s+(now\s+)?(?:{v})\w*ing\b",
             # a reply OPENING with a bare action-gerund is a claim:
             # "Changing output device to monitor speakers. Testing, testing."
-            rf"^\s*(?!speaking of)(?:{v})\w*ing\b[^.!?]{{0,50}}\b(to|the|your|it|now)\b",
+            # a bare action-gerund starting ANY sentence, not just the reply
+            # ("I apologize. Opening WhatsApp and sending the message…")
+            rf"(?:^|[.!?]\s+)(?!speaking of)(?:{v})\w*ing\b"
+            rf"[^.!?]{{0,50}}\b(to|the|your|it|now|and)\b",
             rf"\b(?:{v})\w*ing\b[^.!?]*\b(now|right away|as we speak|for you)\b",
             r"\b(consider it done|it'?s all set|all set now|done and dusted|sorted now)\b",
             r"i'?ll (let you know|tell you|give you a (note|shout)) when\b"
@@ -1446,9 +1564,12 @@ class Brain:
         if not any(re.search(p, reply, re.I) for p in patterns):
             return False
         try:  # real background work makes progress-talk legitimate
-            active = json.loads((self.base / "deep_task_active.json")
-                                .read_text(encoding="utf-8")).get("count", 0)
-            if active > 0:
+            data = json.loads((self.base / "deep_task_active.json")
+                              .read_text(encoding="utf-8"))
+            # only FRESH tasks count — a crashed worker used to leave the
+            # counter stuck high, muting this check permanently
+            live = [t for t in data.get("tasks", []) if time.time() - t < 1800]
+            if live:
                 return False
         except (OSError, json.JSONDecodeError):
             pass
@@ -1475,9 +1596,12 @@ class Brain:
         if not (topic and claim):
             return False
         try:  # is a big-brain task genuinely running?
-            active = json.loads((self.base / "deep_task_active.json")
-                                .read_text(encoding="utf-8")).get("count", 0)
-            if active > 0:
+            data = json.loads((self.base / "deep_task_active.json")
+                              .read_text(encoding="utf-8"))
+            # only FRESH tasks count — a crashed worker used to leave the
+            # counter stuck high, muting this check permanently
+            live = [t for t in data.get("tasks", []) if time.time() - t < 1800]
+            if live:
                 return False
         except (OSError, json.JSONDecodeError):
             pass

@@ -45,4 +45,9 @@ class Transcriber:
         low = text.lower()
         if any(a in low for a in self.ARTIFACTS):
             return ""  # a caption ghost, not Jacob
-        return text
+        try:  # repair TARS's own words — whisper has never heard of Basel,
+            import hearing  # Mini CAD or CADAM, but TARS has
+
+            return hearing.fix(text)
+        except Exception:
+            return text

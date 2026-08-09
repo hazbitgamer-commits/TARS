@@ -1,17 +1,18 @@
 """TARS on Jacob's phone — a Telegram bridge, zero extra dependencies
 (plain HTTPS long-polling against api.telegram.org).
 
-Setup (one-time, Jacob does this on his phone):
-  1. In Telegram, message @BotFather → /newbot → pick a name → BotFather
-     replies with a token like 123456:ABC-xyz.
-  2. Put TELEGRAM_BOT_TOKEN=<that token> into tars/.env and restart TARS.
-  3. Message the new bot exactly:  hey tars it's jacob
+Setup (one-time, on the phone):
+  1. Message @BotFather → /newbot → pick a name → he replies with a token
+     like 123456:ABC-xyz.
+  2. Put TELEGRAM_BOT_TOKEN=<token> into tars/.env and restart TARS.
+  3. Message the new bot:  hey tars it's jacob
      That first correct phrase LOCKS the bridge to that chat forever —
-     anyone else who finds the bot gets ignored.
+     anyone else who finds the bot is ignored in total silence.
 
-After pairing: text TARS anything you'd normally say out loud. Replies come
-back as messages. Skills work too — vacuum from the shops, timers, email.
-Hard-block rules apply exactly as they do by voice."""
+Then text him anything you'd say out loud: skills run, replies come back,
+design previews arrive as photos. Hard-block rules apply exactly as they
+do by voice, and /notify decides whether his announcements follow you.
+"""
 import json
 import threading
 import time
@@ -19,10 +20,29 @@ from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
 OWNER_FILE = BASE / "telegram_owner.txt"
-PAIR_PHRASE = "hey tars it's jacob"
+STATE_FILE = BASE / "telegram_state.json"
+PAIR_PHRASES = ("hey tars it's jacob", "hey tars its jacob",
+                "hey tars, it's jacob", "hey tars this is jacob")
+HELP = ("Text me like you'd talk to me:\n"
+        "• any command — timers, vacuum, lists, email, designs\n"
+        "• /status — how I'm doing right now\n"
+        "• /designs — my latest design, as a photo\n"
+        "• /notify on|off — should my announcements reach your phone\n"
+        "• /help — this")
 
 _brain = None
 _token = ""
+
+
+def _state() -> dict:
+    try:
+        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save(s: dict) -> None:
+    STATE_FILE.write_text(json.dumps(s), encoding="utf-8")
 
 
 def _api(method: str, **params):
@@ -34,34 +54,122 @@ def _api(method: str, **params):
     return r.json()
 
 
-def send(text: str) -> None:
-    """Message the paired phone (used for replies; safe no-op unpaired)."""
-    if not (_token and OWNER_FILE.exists() and text):
+def paired() -> bool:
+    return OWNER_FILE.exists()
+
+
+def _owner() -> int | None:
+    try:
+        return int(OWNER_FILE.read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def send(text: str, force: bool = False) -> None:
+    """Message the paired phone. Announcements only go out if /notify is on
+    (force=True for replies to something Jacob just texted)."""
+    owner = _owner()
+    if not (_token and owner and text):
+        return
+    if not force and not _state().get("notify", False):
         return
     try:
-        _api("sendMessage", chat_id=int(OWNER_FILE.read_text().strip()),
-             text=text[:4000])
+        for chunk in [text[i:i + 3800] for i in range(0, len(text), 3800)]:
+            _api("sendMessage", chat_id=owner, text=chunk)
     except Exception:
         pass
 
 
+def send_photo(path: Path, caption: str = "") -> bool:
+    owner = _owner()
+    if not (_token and owner and Path(path).exists()):
+        return False
+    try:
+        import requests
+
+        with open(path, "rb") as f:
+            r = requests.post(
+                f"https://api.telegram.org/bot{_token}/sendPhoto",
+                data={"chat_id": owner, "caption": caption[:900]},
+                files={"photo": f}, timeout=90)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+def _command(cmd: str, chat_id: int) -> bool:
+    """Slash commands. True if handled."""
+    low = cmd.lower()
+    if low.startswith("/help") or low.startswith("/start"):
+        _api("sendMessage", chat_id=chat_id, text=HELP)
+        return True
+    if low.startswith("/status"):
+        try:
+            import dashboard
+            import improve
+
+            s = improve._state()
+            _api("sendMessage", chat_id=chat_id, text=(
+                f"Status: {dashboard.state.get('status', '?')}\n"
+                f"Upgrades today: {s.get('count', 0)}\n"
+                f"Notifications: {'on' if _state().get('notify') else 'off'}"))
+        except Exception:
+            _api("sendMessage", chat_id=chat_id, text="I'm awake.")
+        return True
+    if low.startswith("/notify"):
+        on = "off" not in low
+        s = _state()
+        s["notify"] = on
+        _save(s)
+        _api("sendMessage", chat_id=chat_id,
+             text=f"Announcements to your phone are {'on' if on else 'off'}.")
+        return True
+    if low.startswith("/designs"):
+        pngs = sorted((BASE / "workshop" / "designs").glob("*.png"),
+                      key=lambda p: -p.stat().st_mtime)
+        if not pngs:
+            _api("sendMessage", chat_id=chat_id, text="No designs yet.")
+        elif not send_photo(pngs[0], pngs[0].stem.replace("_", " ")):
+            _api("sendMessage", chat_id=chat_id,
+                 text="I couldn't send the preview.")
+        return True
+    return False
+
+
+def _pairs(text: str) -> bool:
+    """Phones rewrite apostrophes (it's → it’s) and capitalise — the first
+    pairing attempt died on a curly quote. Be generous: the phrase just has
+    to mention TARS and Jacob."""
+    clean = (text.lower().replace("’", "'").replace("‘", "'")
+             .strip(" .!?,"))
+    if clean in PAIR_PHRASES:
+        return True
+    return "tars" in clean and "jacob" in clean and len(clean) < 60
+
+
 def _handle(chat_id: int, text: str) -> None:
-    owner = int(OWNER_FILE.read_text().strip()) if OWNER_FILE.exists() else None
+    owner = _owner()
     if owner is None:
-        if text.strip().lower().rstrip(".!") == PAIR_PHRASE:
+        try:  # so a failed pairing is visible instead of silent
+            print(f"(phone: unpaired message from {chat_id}: {text[:60]!r})")
+        except Exception:
+            pass
+        if _pairs(text):
             OWNER_FILE.write_text(str(chat_id), encoding="utf-8")
             _api("sendMessage", chat_id=chat_id,
                  text="Paired. This phone is now the only one I'll ever "
-                      "listen to. What do you need, Jacob?")
+                      "listen to.\n\n" + HELP)
         return  # wrong phrase or stranger: total silence
     if chat_id != owner:
-        return  # strangers get nothing, not even an error
+        return
 
+    if text.startswith("/") and _command(text, chat_id):
+        return
     try:
-        reply = _brain.handle(f"{text}") or "..."
+        reply = _brain.handle(text) or "..."
     except Exception as e:
         reply = f"That went sideways on the PC: {e}"
-    _api("sendMessage", chat_id=chat_id, text=reply[:4000])
+    send(reply, force=True)
     try:
         import main
 
@@ -72,19 +180,22 @@ def _handle(chat_id: int, text: str) -> None:
 
 
 def _poll_forever() -> None:
-    offset = 0
+    offset = _state().get("offset", 0)
     while True:
         try:
             updates = _api("getUpdates", offset=offset, timeout=50)
             for u in updates.get("result", []):
                 offset = u["update_id"] + 1
+                s = _state()
+                s["offset"] = offset  # survive restarts without replaying
+                _save(s)
                 msg = u.get("message") or {}
                 text = (msg.get("text") or "").strip()
                 chat_id = (msg.get("chat") or {}).get("id")
                 if text and chat_id:
                     _handle(chat_id, text)
         except Exception:
-            time.sleep(10)  # network blip / Avast mood — retry gently
+            time.sleep(10)  # network blip — retry gently
 
 
 def start(brain) -> None:
@@ -100,4 +211,5 @@ def start(brain) -> None:
         return
     _brain = brain
     threading.Thread(target=_poll_forever, daemon=True).start()
-    print("(phone bridge up — Telegram)")
+    print("(phone bridge up — Telegram"
+          + (", paired)" if paired() else ", waiting to pair)"))

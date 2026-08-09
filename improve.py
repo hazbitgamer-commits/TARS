@@ -332,7 +332,18 @@ def unused_skills(days: int = 14) -> list[str]:
     KEEP = {"chat", "deep_task", "improve", "remember", "recall", "timers",
             "weather", "camera", "camera_feed", "delete_files", "vacuum",
             "calendar", "email", "open_app", "volume", "design", "cad"}
-    return sorted(all_skills - used - KEEP)
+    # a brand-new skill isn't a dead skill — it just hasn't had its turn
+    # (this once listed 43 "idle" skills, most of them a day old)
+    fresh = set()
+    for s in all_skills:
+        try:
+            age = (datetime.datetime.now().timestamp()
+                   - (BASE / "skills" / s / "skill.py").stat().st_mtime)
+            if age < 10 * 86400:
+                fresh.add(s)
+        except OSError:
+            continue
+    return sorted(all_skills - used - KEEP - fresh)
 
 
 # ---------------- introspection: the scientist session ----------------

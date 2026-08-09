@@ -219,6 +219,7 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.25)}
         border:1px solid rgba(70,212,255,.35);color:var(--cyan);border-radius:10px;
         padding:8px 0;font-size:12px;letter-spacing:2px;cursor:pointer;transition:.25s">TEACH</button>
       <div id="teachNote" style="font-size:11px;color:var(--dim);margin-top:6px"></div></div>
+    <div class="card"><h3>Routines</h3><div id="routines" class="empty">none yet</div></div>
     <div class="card"><h3>Kipp proposes</h3><div id="proposals" class="empty">no ideas on the table</div></div>
     <div class="card" style="flex:1"><h3>Kipp — self-improvement</h3><div id="kipp" class="empty">quiet so far</div></div>
     <div class="card"><h3>Windows</h3><div id="links">
@@ -483,6 +484,37 @@ async function pickVoice(id){
     statusEl.textContent = "couldn't reach TARS to change the voice";
   }
 }
+
+/* ---------- routines ---------- */
+async function pollRoutines(){
+  try{
+    const d = await (await fetch("/api/routines")).json();
+    const box = document.getElementById("routines");
+    const list = d.routines || [];
+    if(!list.length){ box.className="empty"; box.textContent="none yet"; return; }
+    box.className = "";
+    box.innerHTML = list.map(r => `
+      <button class="routineBtn" data-name="${esc(r.name)}" style="display:block;width:100%;
+        text-align:left;background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.25);
+        color:#cdbcff;border-radius:10px;padding:7px 11px;margin-bottom:6px;cursor:pointer;
+        font:inherit;font-size:12.5px;transition:.2s">
+        ${esc(r.name)}${r.when ? `<span style="float:right;color:var(--dim);font-size:10.5px">${esc(String(r.when))}</span>` : ""}
+      </button>`).join("");
+    box.querySelectorAll(".routineBtn").forEach(b => {
+      b.onmouseenter = () => b.style.background = "rgba(167,139,250,.18)";
+      b.onmouseleave = () => b.style.background = "rgba(167,139,250,.08)";
+      b.onclick = async () => {
+        const original = b.innerHTML;
+        b.innerHTML = "running…";
+        const r = await (await fetch("/api/routines/run",{method:"POST",
+          body: JSON.stringify({name: b.dataset.name})})).json();
+        b.innerHTML = r.ok ? "✔ " + esc(b.dataset.name) : original;
+        setTimeout(() => { b.innerHTML = original; }, 4000);
+      };
+    });
+  }catch(e){}
+}
+setInterval(pollRoutines, 20000); pollRoutines();
 
 /* ---------- design gallery ---------- */
 async function pollDesigns(){
