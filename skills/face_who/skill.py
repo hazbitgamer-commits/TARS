@@ -16,8 +16,13 @@ def run(args: dict) -> str:
     seen = faces.identify()
     if not seen:
         return "I can't see any faces right now."
-    named = [s["name"] for s in seen if s["name"]]
+    # report EVERYONE, left to right — it used to say "I can see Jacob"
+    # with two people in frame
+    seen = sorted(seen, key=lambda s: s.get("box", [0])[0])
+    named = list(dict.fromkeys(s["name"] for s in seen if s["name"]))
     unknown = sum(1 for s in seen if not s["name"])
+    if len(seen) > 1 and not unknown:
+        return f"I can see {len(seen)} people: " + " and ".join(named) + "."
     parts = []
     if named:
         parts.append("I can see " + " and ".join(named))

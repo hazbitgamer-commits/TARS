@@ -182,6 +182,7 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.25)}
 <div id="tabs">
   <button class="tabBtn active" data-tab="home">Dashboard</button>
   <button class="tabBtn" data-tab="voice">Voice</button>
+  <button class="tabBtn" data-tab="designs">Designs</button>
 </div>
 
 <div id="panel-home" class="panel active">
@@ -224,6 +225,15 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.25)}
       <a href="/brain">BRAIN</a><a href="/camera">CAMERA</a></div></div>
   </div>
 </div>
+</div>
+
+<div id="panel-designs" class="panel">
+  <div class="card" style="flex:1;display:flex;flex-direction:column;min-height:0">
+    <h3>Designs — everything you've made</h3>
+    <div id="designStatus" style="font-size:11.5px;color:var(--dim);margin-bottom:12px">loading…</div>
+    <div id="designGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));
+         gap:14px;overflow-y:auto;padding-right:6px"></div>
+  </div>
 </div>
 
 <div id="panel-voice" class="panel">
@@ -473,6 +483,47 @@ async function pickVoice(id){
     statusEl.textContent = "couldn't reach TARS to change the voice";
   }
 }
+
+/* ---------- design gallery ---------- */
+async function pollDesigns(){
+  try{
+    const d = await (await fetch("/api/designs")).json();
+    const grid = document.getElementById("designGrid");
+    const status = document.getElementById("designStatus");
+    const list = d.designs || [];
+    if(!list.length){
+      status.textContent = "Nothing designed yet — say “design me a phone stand”.";
+      grid.innerHTML = ""; return;
+    }
+    status.textContent = list.length + " design" + (list.length===1?"":"s") +
+      " · click one to open it in the 3D viewer";
+    grid.innerHTML = list.map(x => `
+      <div class="designCard" data-name="${esc(x.name)}" style="background:var(--panel);
+           border:1px solid var(--panel-edge);border-radius:14px;overflow:hidden;
+           cursor:pointer;transition:.2s">
+        ${x.png ? `<img src="/designs/${esc(x.png)}" style="width:100%;height:130px;
+             object-fit:cover;background:#070b14;display:block">`
+                : `<div style="height:130px;display:grid;place-items:center;color:var(--faint);
+             font-size:11px">no preview</div>`}
+        <div style="padding:9px 11px">
+          <div style="font-size:13px;color:#eaf6ff;text-transform:capitalize">${esc(x.pretty)}</div>
+          <div style="font-size:10.5px;color:var(--dim);margin-top:3px">
+            ${esc(x.when)}${x.stl ? " · STL ready" : ""}</div>
+        </div>
+      </div>`).join("");
+    grid.querySelectorAll(".designCard").forEach(c => {
+      c.onmouseenter = () => c.style.borderColor = "rgba(70,212,255,.45)";
+      c.onmouseleave = () => c.style.borderColor = "var(--panel-edge)";
+      c.onclick = async () => {
+        status.textContent = "opening " + c.dataset.name.replace(/_/g," ") + " …";
+        await fetch("/api/designs/open", {method:"POST",
+          body: JSON.stringify({name: c.dataset.name})});
+        setTimeout(pollDesigns, 2500);
+      };
+    });
+  }catch(e){}
+}
+setInterval(pollDesigns, 15000); pollDesigns();
 
 /* ---------- Kipp's proposals: Build / Ignore ---------- */
 async function pollProposals(){

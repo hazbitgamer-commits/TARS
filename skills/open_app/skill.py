@@ -30,6 +30,15 @@ ALIASES = {
     "companion app": "https://www.ea.com/ea-sports-fc/ultimate-team/web-app/",
     "youtube": "https://www.youtube.com", "gmail": "https://mail.google.com",
     "whatsapp web": "https://web.whatsapp.com",
+    "github": "https://github.com", "the github": "https://github.com",
+    "my github": "https://github.com/hazbitgamer-commits?tab=repositories",
+    "cadam": "https://adam.new/cadam",  # text-to-CAD in the browser
+    "adam cad": "https://adam.new/cadam",
+    # whisper's renderings of "CADAM"
+    "cadm": "https://adam.new/cadam",
+    "cad am": "https://adam.new/cadam",
+    "kadam": "https://adam.new/cadam",
+    "cadem": "https://adam.new/cadam",
 }
 
 SITE_WORDS = {" dot com": ".com", " dot net": ".net", " dot org": ".org", " dot au": ".au"}

@@ -5,7 +5,8 @@ cd "$(dirname "$0")"
 source .venv/bin/activate
 export PYTHONIOENCODING=utf-8
 if [ "$1" = "--doctor" ]; then
-  python3 doctor_mac.py
+  python3 doctor.py            # self-diagnosis, fixes what it can
+  python3 doctor_mac.py        # plus the mic/speaker listening tests
   exit 0
 fi
 python3 boot.py --window

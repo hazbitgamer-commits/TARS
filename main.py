@@ -45,6 +45,8 @@ CONFIRM_BELOW = -0.55    # shaky transcription confidence: ask "did you say..?"
 END_WORDS = ("that's all", "thats all", "that is all", "that's it", "thats it",
              "never mind", "nevermind", "stop listening", "thanks tars",
              "thank you tars")
+LAST_AUDIO = None      # the last recorded command — voice_id learns from it
+LAST_SPEAKER = None    # who TARS thinks is talking (None = unknown/guest)
 SLEEP_WORDS = ("go to sleep", "sleep mode", "go quiet")
 WAKE_UP_WORDS = ("wake up", "i'm back", "wakey")
 SHUTDOWN_WORDS = ("goodbye tars", "goodbye, tars", "shut down tars", "tars shut down",
@@ -253,6 +255,25 @@ def main() -> None:
     # self-upgrade that breaks start-up
     import improve
 
+    def _startup_health() -> None:
+        """Quiet self-check after startup: speak ONLY if something's wrong,
+        so a broken organ announces itself instead of failing silently."""
+        try:
+            import announce
+            import doctor
+
+            problems, fixed = doctor.run_checks(fix=True)
+            if problems:
+                announce.post("Heads up — " + doctor.spoken_summary(
+                    problems, fixed), hold_during_quiet=True)
+            elif fixed:
+                print(f"(self-check fixed: {', '.join(fixed)})")
+        except Exception:
+            pass
+
+    health_timer = threading.Timer(25, _startup_health)
+    health_timer.daemon = True
+    health_timer.start()
     snapshot_timer = threading.Timer(60, improve.snapshot_last_good)
     snapshot_timer.daemon = True  # never keep a dying TARS alive
     snapshot_timer.start()
@@ -366,6 +387,22 @@ def main() -> None:
                 text = transcriber.transcribe(audio)
                 if not text:
                     break
+
+                # WHO said it — unknown voices get the guest treatment
+                # automatically (no personal facts), Jacob gets himself
+                global LAST_AUDIO, LAST_SPEAKER
+                LAST_AUDIO = audio
+                try:
+                    import speaker as spk_id
+
+                    if spk_id.known():
+                        who = spk_id.identify(audio)
+                        if who != LAST_SPEAKER:
+                            LAST_SPEAKER = who
+                            log("said", f"(voice: {who or 'unknown'})")
+                        brain.speaker_name = who
+                except Exception:
+                    pass
 
                 # humanoid instinct: if the ears weren't sure, check first
                 if (transcriber.last_confidence < CONFIRM_BELOW

@@ -28,7 +28,9 @@ class Transcriber:
                 "Apps include Claude, Brave, Chrome, YouTube, Spotify, Steam, "
                 "Discord, Obsidian, and File Explorer. TARS can show its brain "
                 "page and its dashboard, and controls the Robovac vacuum, "
-                "which Jacob calls Basel. Jacob often says: override quiet hours."
+                "which Jacob calls Basel. Jacob often says: override quiet "
+                "hours. Jacob uses TARS's Mini CAD app, pronounced Mini CAD, "
+                "and a website called CADAM, pronounced CAD-am."
             ),
         )
         parts, logprobs = [], []

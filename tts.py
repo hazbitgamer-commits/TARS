@@ -55,6 +55,31 @@ def _kokoro_engine():
     return _kokoro
 
 
+# expressive delivery: the brain sets a mood, the voice carries it
+MOOD = "neutral"
+MOOD_SPEED = {"excited": 1.10, "frustrated": 0.97, "night": 0.93,
+              "neutral": 1.0}
+MOOD_GAIN = {"excited": 1.05, "frustrated": 0.95, "night": 0.7,
+             "neutral": 1.0}
+
+
+def set_mood(mood: str) -> None:
+    global MOOD
+    MOOD = mood if mood in MOOD_SPEED else "neutral"
+
+
+def _mood_now() -> str:
+    """Night beats mood — a 3am reply shouldn't bounce."""
+    try:
+        import quiet
+
+        if quiet.is_active()[0]:
+            return "night"
+    except Exception:
+        pass
+    return MOOD
+
+
 def _rate_to_speed() -> float:
     try:
         pct = int(RATE.replace("%", "").replace("+", ""))
@@ -62,7 +87,7 @@ def _rate_to_speed() -> float:
             pct = -pct
     except ValueError:
         pct = 8
-    return max(0.6, min(1.6, 1.0 + pct / 100))
+    return max(0.6, min(1.6, (1.0 + pct / 100) * MOOD_SPEED[_mood_now()]))
 
 
 def _synth(text: str):
@@ -113,15 +138,9 @@ class Speaker:
 
     @staticmethod
     def _night(audio):
-        """Night mode: softer voice during quiet hours."""
-        try:
-            import quiet
-
-            if quiet.is_active()[0]:
-                return audio * 0.55
-        except Exception:
-            pass
-        return audio
+        """Delivery gain: softer at night, a touch livelier when Jacob's
+        excited, gentler when he's annoyed."""
+        return audio * MOOD_GAIN[_mood_now()]
 
     def _play(self, audio, sr) -> bool:
         """Play, interruptibly: polls the stop flag while audio runs.

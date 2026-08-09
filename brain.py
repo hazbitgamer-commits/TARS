@@ -66,6 +66,17 @@ class Brain:
             f"already covers it and the phrase Jacob should use. Only proceed "
             f"past this point if the request is genuinely new.\n"
             f"Existing skills:\n{existing}\n"
+            f"SECOND, DON'T REINVENT IT (Jacob's rule, 2026-08-08): search "
+            f"for an existing open-source tool before writing your own "
+            f"engine. Use TARS's find_tool skill "
+            f"(skills/find_tool/skill.py — call its search(query) from "
+            f"python, it queries GitHub and PyPI) and/or WebSearch. If a "
+            f"maintained library does the heavy lifting (pdf reading, "
+            f"image conversion, device protocols, parsing...), pip-install "
+            f"it into the runtime and write a THIN skill that wraps it — "
+            f"that beats hand-rolled code every time. Say in SPOKEN which "
+            f"library you used, if any. Only hand-roll when nothing "
+            f"suitable exists or the job is genuinely trivial.\n"
             f"Create a new folder {skills_dir}\\<short_snake_name>\\ containing "
             f"skill.py and skill.md. skill.py MUST define: DESCRIPTION (one-line "
             f"string for the intent router), ARGS (dict of argument name -> "
@@ -165,6 +176,30 @@ class Brain:
             # as a fresh command instead
 
         # a proposed self-teaching is waiting on Jacob's yes/no
+        # the design skill asked "Design what, exactly?" — Jacob's next
+        # words ARE the design request (he once described a full iPhone
+        # stand and got asked the same question again)
+        if getattr(self, "pending_design", False):
+            self.pending_design = False
+            if re.match(r"^(re-?open|open|load|show|bring)\b", lowered):
+                # he's asking to SEE a design, not describing a new one —
+                # the catch-all once sent "Re-open that last project" to
+                # the big brain as an object to design
+                result = self.skills.run(
+                    "design", {"action": "load", "name": "latest"})
+                self.history += [{"role": "user", "content": text},
+                                 {"role": "assistant", "content": result}]
+                return result
+            if not lowered.strip().startswith(("no", "nah", "cancel",
+                                               "never mind", "nevermind")):
+                result = self.skills.run(
+                    "design", {"request": text.strip(" .!?")})
+                self.history += [{"role": "user", "content": text},
+                                 {"role": "assistant", "content": result}]
+                self._journal(f"design: {result[:100]}")
+                return result
+            return "Fair enough, no design."
+
         if self.pending_learn:
             request = self.pending_learn
             self.pending_learn = None
@@ -345,6 +380,289 @@ class Brain:
                 ("what would", "if you could", "would you want", "wish",
                  "do you want", "what do you think", "how do you feel")):
             name = "chat"
+        # self-diagnosis: "are you healthy" must never reach chat, which
+        # would cheerfully invent a clean bill of health
+        if re.search(r"\b(self.?check|self.?test|diagnos\w*|check yourself|"
+                     r"fix yourself|what'?s wrong with you|are you (ok|okay|"
+                     r"healthy|working|broken))\b", lowered) and \
+                not any(w in lowered for w in ("pc", "computer", "disk",
+                                               "memory", "cpu")):
+            name = "self_check"
+            route["args"] = {"fix": "false" if any(
+                w in lowered for w in ("don't fix", "dont fix", "just check",
+                                       "only look", "without fixing")
+            ) else "true"}
+        # voice profiles: "learn my voice" is the MIC, not the camera
+        if re.search(r"\bvoices?\b", lowered) and \
+                re.search(r"\b(learn|remember|know|recognis|recogniz|forget|"
+                          r"whose)\b", lowered) and \
+                not any(w in lowered for w in ("accent", "speed", "british",
+                                               "output", "device", "sound "
+                                               "like", "change your voice")):
+            act = ("forget" if "forget" in lowered else
+                   "list" if any(w in lowered for w in ("whose", "know",
+                                                        "which voices"))
+                   else "learn")
+            m = (re.search(r"\b(?:voice as|voice of|forget)\s+([A-Z][a-z]+)",
+                           text)
+                 or re.search(r"\b([A-Z][a-z]+)'?s?\s+voice\b", text))
+            name = "voice_id"
+            route["args"] = {"action": act,
+                             "name": (m.group(1) if m else
+                                      ("Jacob" if "my voice" in lowered else ""))}
+        # clearing the face database is FORGETTING, not learning a person
+        # called "all names" (my NOT_NAMES guard swallowed it)
+        if re.search(r"\b(clear|wipe|forget|delete|remove)\b", lowered) and \
+                re.search(r"\b(face|faces|camera|recognition|names?)\b", lowered):
+            m = re.search(r"forget\s+([A-Z][a-z]+)", text)
+            name = "face_forget"
+            route["args"] = {"name": (m.group(1) if m and "all" not in lowered
+                                      else "all")}
+        # face learning: pass along WHICH person Jacob means, and never
+        # let "that's me, TARS. I'm Jacob" enrol a face called Tars
+        if name == "face_learn":
+            args_in = route.get("args") or {}
+            hint = next((w for w in ("background", "behind", "further",
+                                     "back", "left", "right", "closest",
+                                     "front", "second") if w in lowered), "")
+            m = re.search(r"\b(?:is|are|call(?:ed)?|name(?:d)?)\s+"
+                          r"([A-Z][a-z]{1,15})\b", text)
+            nm = str(args_in.get("name") or "")
+            if nm.strip().lower() in ("tars", "hey tars", "me", "you") and m:
+                nm = m.group(1)
+            elif not nm and m:
+                nm = m.group(1)
+            route["args"] = {"name": nm, "which": hint}
+        # idea inbox: "idea: X" / "what were my ideas"
+        if re.match(r"^(hey tars[,.! ]*)?(an? )?idea[:,]", lowered) or \
+                re.search(r"\b(note down|jot down|save|capture) (an? )?idea\b",
+                          lowered):
+            name = "ideas"
+            route["args"] = {"action": "add", "idea": re.sub(
+                r"^.*?idea[:,]?\s*", "", text, flags=re.I).strip(" .!?")}
+        elif re.search(r"\b(my |any |what )?ideas?\b", lowered) and \
+                any(w in lowered for w in ("what", "list", "read", "any",
+                                           "remind me")):
+            m = re.search(r"ideas? (?:for|about|on) (.+)$", lowered)
+            name = "ideas"
+            route["args"] = {"action": "list",
+                             "project": (m.group(1).strip(" .?!") if m else "")}
+        # project re-entry: "where did I leave off with X"
+        if re.search(r"\b(where did i (leave off|get to)|what.{0,12}state of|"
+                     r"what was i (doing|working on)|catch me up|"
+                     r"remind me where i)\b", lowered) or \
+                re.search(r"\bwhat projects do i have\b", lowered):
+            m = re.search(r"(?:with|on|of|for)\s+(?:the\s+|my\s+)?([\w' ]{2,30})$",
+                          lowered.strip(" .?!"))
+            name = "project_status"
+            route["args"] = {"project": (m.group(1).strip() if m
+                                         else "list")}
+        # overnight queue
+        if re.search(r"\b(overnight|tonight|while i sleep|before bed)\b",
+                     lowered) and any(w in lowered for w in
+                                      ("queue", "work on", "build", "add",
+                                       "job", "task")):
+            if any(w in lowered for w in ("what", "list", "how many")):
+                name, route["args"] = "work_queue", {"action": "list"}
+            elif "clear" in lowered or "cancel" in lowered:
+                name, route["args"] = "work_queue", {"action": "clear"}
+            else:
+                name = "work_queue"
+                route["args"] = {"action": "add", "task": re.sub(
+                    r"^.*?(overnight queue|tonight|overnight)[:,]?\s*", "",
+                    text, flags=re.I).strip(" .!?") or text}
+        elif re.search(r"\b(what'?s? in your|show me your|clear the)\s+queue\b",
+                       lowered):
+            name = "work_queue"
+            route["args"] = {"action": "clear" if "clear" in lowered else "list"}
+        # "search github for X" / "is there a tool/library for X" —
+        # reuse-before-rebuild, never the generic web search
+        if re.search(r"\b(github|open.?source|"
+                     r"an? (library|package|tool|program) (for|that|to)|"
+                     r"any (library|libraries|tools?|packages?) (for|that))\b",
+                     lowered) and not any(
+                w in lowered for w in ("upload", "publish", "push", "my code",
+                                       "yourself")) \
+                and not re.search(r"\b(open|go to|visit|take me to|show me)"
+                                  r"\s+(the\s+|my\s+)?github\s*"
+                                  r"(website|site|page|profile)?[\s.!?]*$",
+                                  lowered):
+            name = "find_tool"
+            route["args"] = {"query": re.sub(
+                r"^(hey tars[,.! ]*)?(can you |could you |please )?"
+                r"(search (github|the internet|online) for|find me?|"
+                r"is there|are there|look for)\s*(an?|any)?\s*"
+                r"(?:(?:library|package|tool|program|repo|project)s?)?\s*"
+                r"(?:for|that|to)?\s*", "", lowered).strip(" .?!") or text}
+        # "what are the dimensions of this?" — the design's real numbers
+        if re.search(r"\b(dimensions|measurements|how (big|tall|wide|thick))\b",
+                     lowered) and not any(w in lowered for w in
+                                          ("screen", "monitor", "window",
+                                           "room", "house")):
+            _dm = re.search(r"(?:of|for)\s+(?:the |my )?([\w' ]{3,30}?)"
+                            r"(?:\s+design)?\s*[?.]?$", lowered)
+            name = "design"
+            route["args"] = {"action": "dimensions",
+                             "name": (_dm.group(1).strip()
+                                      if _dm and _dm.group(1) not in
+                                      ("this", "it", "that") else "latest")}
+        # design collection management
+        if re.search(r"(what|list|which|show) (my |the )?designs\b", lowered):
+            name = "design"
+            route["args"] = {"action": "list"}
+        _load_m = re.search(r"(?:load|open|show)(?: up)?\s+(?:my |the )?"
+                            r"(.{0,40}?)\s*design\b", lowered)
+        if _load_m and "designs" not in lowered:
+            name = "design"
+            route["args"] = {"action": "load",
+                             "name": _load_m.group(1).strip() or "latest"}
+        # after a design lands, TARS asks "Want me to change anything, or
+        # shall I open it so you can rotate it?" — route the answer
+        _recent_all = " ".join(m["content"].lower()
+                               for m in self.history[-6:])
+        _design_convo = any(w in _recent_all for w in
+                            ("change anything", "3d printing", ".stl",
+                             "stl file", "3d viewer", "drag to rotate",
+                             "designing it now", "millimetres", "millimeters"))
+        _design_ctx = _design_convo
+        if not _design_ctx:
+            # a design touched in the last 2 hours IS the context, even if
+            # the chat has wandered off to dashboards and speakers
+            try:
+                newest = max((p.stat().st_mtime for p in
+                              (self.base / "workshop" / "designs").glob("*.scad")),
+                             default=0)
+                _design_ctx = time.time() - newest < 7200
+            except OSError:
+                pass
+        # "make the love heart design a millimetre thicker" names its target
+        _named_design = re.search(
+            r"(?:the |my )([\w' ]{3,30}?)\s+design\b", lowered)
+        if _design_ctx:
+            short = lowered.strip(" .!?")
+            if any(w in lowered for w in ("open it", "reopen", "re-open",
+                                          "open that", "rotate",
+                                          "let me see", "load it", "show it",
+                                          "bring it back", "last project",
+                                          "last design", "open the last")) \
+                    or short in ("yes", "yes please", "sure", "go on",
+                                 "open", "yeah"):
+                name = "design"
+                route["args"] = {"action": "load", "name": "latest"}
+            elif re.search(r"(\d+|\b(a|one|two|three|four|five|ten|half)\b)"
+                           r"\s*(mm|millimet|cm|centimet|percent|%)"
+                           r"|\b(a bit|slightly|little)\b", lowered) and \
+                    any(w in lowered for w in ("wider", "taller", "thicker",
+                                               "thinner", "bigger", "smaller",
+                                               "shorter", "longer", "deeper",
+                                               "narrower", "make it", "make the")) and \
+                    not any(w in lowered for w in ("add ", "remove", "hole",
+                                                   "button", "feature")):
+                # a pure DIMENSION nudge — instant local edit, no big brain
+                name = "design"
+                route["args"] = {"action": "tweak", "request": text,
+                                 "name": (_named_design.group(1).strip()
+                                          if _named_design else "latest")}
+            elif len(text) > 8 and (_design_convo or _named_design) and \
+                    not any(w in lowered for w in
+                            ("output device", "voice", "speaker", "volume",
+                             "headphone", "monitor", "microphone", "song",
+                             "brightness", "vacuum", "light")) and \
+                    any(w in lowered for w in
+                    ("make it", "change", "wider", "taller", "thicker",
+                     "thinner", "bigger", "smaller", "shorter", "longer",
+                     "deeper", "add ", "remove the", "round the")):
+                scads = sorted(
+                    (self.base / "workshop" / "designs").glob("*.scad"),
+                    key=lambda p: -p.stat().st_mtime)
+                if scads:
+                    name = "deep_task"
+                    route["args"] = {"task": (
+                        f"MODIFY the 3D design at {scads[0]}: Jacob said "
+                        f"{text!r}. Apply the change to the OpenSCAD file "
+                        f"(it's parametric — prefer changing the named "
+                        f"variables), re-render the preview PNG and the STL "
+                        f"with \"C:\\Program Files\\OpenSCAD\\openscad.exe\" "
+                        f"(-o <name>.png --imgsize=1000,750 --viewall "
+                        f"--autocenter, and -o <name>.stl), then AUTO-OPEN "
+                        f"the interactive viewer (launch openscad.exe on "
+                        f"the .scad DETACHED, not the PNG), and end SPOKEN "
+                        f"with exactly: 'The new version's on your screen "
+                        f"— drag to rotate. Want me to change anything "
+                        f"else?'")}
+        # design FROM A PHOTO: "design a stand for this" (camera-gated by
+        # Jacob's rule — the word camera/this/holding must be present)
+        _photo_pending = (self.base / "photo_design.json")
+        if re.search(r"\b(design|make|model)\b", lowered) and \
+                re.search(r"\b(for this|for it|this thing|what i'?m holding|"
+                          r"holding|through the camera|look at this)\b", lowered):
+            name = "design"
+            route["args"] = {"action": "photo", "request": text}
+        elif _photo_pending.exists() and re.search(
+                r"\b\d+\s*(mm|millimet|cm|centimet|inch)", lowered):
+            # his answer to "how wide is it?"
+            try:
+                pend = json.loads(_photo_pending.read_text(encoding="utf-8"))
+                _photo_pending.unlink()
+                name = "design"
+                route["args"] = {"action": "photo",
+                                 "request": f"{pend.get('request', '')} "
+                                            f"(object: {pend.get('seen', '')})",
+                                 "size": text}
+            except (OSError, json.JSONDecodeError):
+                pass
+        # text-to-CAD: "design me a X" / "3D model of X" / "printable X"
+        # is the design skill — checked BEFORE the mini-CAD gates so real
+        # design requests never fall into the drawing-toy or open_app
+        if (re.search(r"\b(design|model)\b", lowered)
+                and any(w in lowered for w in ("design me", "design a",
+                                               "model of", "printable",
+                                               "3d model", "make me a",
+                                               "design us", "design,",
+                                               "design may", "design my"))
+                and not any(w in lowered for w in ("mini cad", "minicat",
+                                                   "cadam", "open"))
+                and not re.search(r"\b(for this|for it|holding|this thing)\b",
+                                  lowered)):  # that's the photo path
+            name = "design"
+            route["args"] = {"request": re.sub(
+                r"^(hey tars[,.! ]*)?(please\s+)?(design[,.]?( me| a| us|"
+                r" may a?| my a?)?|make me( a)?|create( me| a)?)\s*", "",
+                lowered).strip(" .!?")
+                or text}
+        # CAD detection: the word itself, whisper's renderings (minicat,
+        # minicab, mini-cad, "the card" mid-CAD-chat), OR pure conversation
+        # context — mid-CAD-session Jacob says "add a rotate feature"
+        # without the word CAD at all
+        _recent = " ".join(m["content"].lower() for m in self.history[-8:])
+        _cad_rx = r"\b(cad|minicat|minicab|mini cad|mini-cad)\b"
+        cad_now = bool(re.search(_cad_rx, lowered))
+        cad_context = bool(re.search(_cad_rx, _recent)) or "mini cad" in _recent
+        if cad_context and re.search(r"\bcard\b", lowered):
+            cad_now = True  # "open the card" right after CAD talk
+        # improving the CAD app is big-brain construction, not a door to
+        # open — "add a rotate feature to MiniCAD" once just opened it
+        if (cad_now or cad_context) and \
+                name not in ("work_queue", "ideas", "project_status",
+                             "find_tool") and \
+                any(w in lowered for w in ("add ", "improve", "upgrade",
+                                           "feature", "make it so",
+                                           "change the", "fix the",
+                                           "rotate", "make it ")):
+            name = "deep_task"
+            route["args"] = {"task": (
+                f"Modify TARS's Mini CAD app at "
+                f"{self.base / 'workshop' / 'mini_cad_3d.py'}: {text!r}. "
+                "Keep all existing behavior working, test it end-to-end by "
+                "importing and instantiating it, and in SPOKEN describe the "
+                "new feature and how Jacob uses it.")}
+        # his own CAD app: "open CAD"/"minicat 3d" (whisper's rendering)
+        # must never fall to open_app's installed-programs search
+        elif cad_now and \
+                any(w in lowered for w in ("open", "launch", "start", "draw")):
+            name = "cad"
+            route["args"] = {"which": "2d" if "2d" in lowered
+                             or "2 d" in lowered else "3d"}
         # the goodnight report has fixed phrases (bare "goodnight" is
         # handled by main.py directly, wrap-up + sleep)
         if any(p in lowered for p in ("goodnight report", "good night report",
@@ -510,6 +828,8 @@ class Brain:
                     else:  # delete_files' original path-based confirm
                         self.pending_delete = target
                     result = message
+                if name == "design" and result.startswith("Design what"):
+                    self.pending_design = True  # catch Jacob's next words
                 if result.startswith("Quiet hours"):  # remember what got blocked
                     self.pending_quiet = (time.time(), name,
                                           dict(route.get("args") or {}))
@@ -964,6 +1284,16 @@ class Brain:
                                .read_text(encoding="utf-8")).get("on", False)
         except (OSError, json.JSONDecodeError):
             pass
+        # voice ID: a stranger at the mic gets guest treatment automatically
+        who = getattr(self, "speaker_name", "sentinel")
+        if who != "sentinel":
+            try:
+                import speaker as _spk
+
+                if _spk.known():
+                    guest = guest or (who is None)
+            except Exception:
+                pass
         about = []
         about_dir = self.base / "vault" / "About Jacob"
         if not guest and about_dir.exists():
@@ -1197,6 +1527,14 @@ class Brain:
 
     def _mood(self, text: str) -> str:
         low = text.lower()
+        try:  # the VOICE carries the mood too, not just the wording
+            import tts
+
+            tts.set_mood("frustrated" if any(w in low for w in self.FRUSTRATED)
+                         else "excited" if any(w in low for w in self.EXCITED)
+                         else "neutral")
+        except Exception:
+            pass
         recent = " ".join(m["content"].lower()
                           for m in self.history[-6:] if m["role"] == "user")
         if any(w in low for w in self.FRUSTRATED):

@@ -281,6 +281,28 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 data = '{"proposals": []}'
             self._send(200, data.encode(), "application/json")
+        elif route == "/api/designs":
+            out = []
+            ddir = BASE / "workshop" / "designs"
+            if ddir.exists():
+                for scad in sorted(ddir.glob("*.scad"),
+                                   key=lambda p: -p.stat().st_mtime):
+                    out.append({
+                        "name": scad.stem,
+                        "pretty": scad.stem.replace("_", " "),
+                        "png": scad.with_suffix(".png").name
+                        if scad.with_suffix(".png").exists() else "",
+                        "stl": scad.with_suffix(".stl").exists(),
+                        "when": datetime.date.fromtimestamp(
+                            scad.stat().st_mtime).strftime("%d %b")})
+            self._send(200, json.dumps({"designs": out}).encode(),
+                       "application/json")
+        elif route.startswith("/designs/"):
+            img = BASE / "workshop" / "designs" / route.split("/")[-1]
+            if img.exists() and img.suffix.lower() == ".png":
+                self._send(200, img.read_bytes(), "image/png")
+            else:
+                self._send(404, b"no", "text/plain")
         elif route == "/api/extras":
             extras = {"lists": {}, "kipp": [], "learning": []}
             try:
@@ -404,6 +426,18 @@ class Handler(BaseHTTPRequestHandler):
                                     data.get("decision") == "build")
                 self._send(200 if ok else 404,
                            json.dumps({"ok": ok}).encode(), "application/json")
+            except Exception:
+                self._send(500, b'{"ok": false}', "application/json")
+        elif self.path == "/api/designs/open":
+            length = int(self.headers.get("Content-Length", 0))
+            data = json.loads(self.rfile.read(length))
+            try:
+                from skills_engine import SkillBox
+
+                msg = SkillBox(BASE).run("design", {
+                    "action": "load", "name": str(data.get("name", "latest"))})
+                self._send(200, json.dumps({"ok": True, "msg": msg}).encode(),
+                           "application/json")
             except Exception:
                 self._send(500, b'{"ok": false}', "application/json")
         elif self.path == "/api/learn":

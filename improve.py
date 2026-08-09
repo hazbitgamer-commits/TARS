@@ -255,6 +255,86 @@ def _reflect() -> None:
         pass
 
 
+# ---------------- Jacob's overnight work queue ----------------
+QUEUE_FILE = BASE / "work_queue.json"
+NIGHT_HOURS = (22, 7)  # queue drains between 10pm and 7am
+
+
+def queue_load() -> list:
+    try:
+        return json.loads(QUEUE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def queue_save(items: list) -> None:
+    QUEUE_FILE.write_text(json.dumps(items, indent=1), encoding="utf-8")
+
+
+def queue_add(task: str) -> int:
+    items = queue_load()
+    items.append({"task": task, "added": datetime.datetime.now().isoformat(
+        timespec="minutes"), "status": "waiting"})
+    queue_save(items)
+    _log(f"QUEUED: {task[:90]}")
+    return len([i for i in items if i["status"] == "waiting"])
+
+
+def _drain_queue() -> None:
+    """One queued job per implement-slot, overnight only — Jacob hands TARS
+    a list before bed and hears the results in the morning."""
+    global _busy
+    hour = datetime.datetime.now().hour
+    if not (hour >= NIGHT_HOURS[0] or hour < NIGHT_HOURS[1]):
+        return
+    items = queue_load()
+    job = next((i for i in items if i["status"] == "waiting"), None)
+    if job is None:
+        return
+    with _lock:
+        if _busy:
+            return
+        _busy = True
+    job["status"] = "running"
+    queue_save(items)
+
+    def worker():
+        try:
+            _implement_worker({"title": job["task"][:60],
+                               "fix": job["task"], "evidence": []})
+            job["status"] = "done"
+        except Exception as e:
+            job["status"] = f"failed: {e}"[:80]
+        finally:
+            queue_save(queue_load()[:0] + items)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+# ---------------- skill spring-cleaning ----------------
+def unused_skills(days: int = 14) -> list[str]:
+    """Skills that haven't fired in a fortnight — 46 of 83 were idle when
+    Kipp first counted. Dead weight slows routing and clutters his head."""
+    try:
+        from skills_engine import SkillBox
+
+        all_skills = {s["skill"] for s in SkillBox(BASE).catalog()}
+    except Exception:
+        return []
+    used, today = set(), datetime.date.today()
+    for back in range(days + 1):
+        day = (today - datetime.timedelta(days=back)).isoformat()
+        for p in (BASE / "vault" / "Journal" / f"Journal {day}.md",
+                  BASE / "logs" / f"{day}.jsonl"):
+            if p.exists():
+                text = p.read_text(encoding="utf-8", errors="replace").lower()
+                used |= {s for s in all_skills if s.lower() in text}
+    KEEP = {"chat", "deep_task", "improve", "remember", "recall", "timers",
+            "weather", "camera", "camera_feed", "delete_files", "vacuum",
+            "calendar", "email", "open_app", "volume", "design", "cad"}
+    return sorted(all_skills - used - KEEP)
+
+
 # ---------------- introspection: the scientist session ----------------
 def _week_lines() -> list[dict]:
     lines = []
@@ -309,25 +389,40 @@ def _evidence() -> list[str]:
         facts.append(f"I told Jacob 'I can't' {len(cant)} times this week, "
                      f"most recently: \"{cant[-1][:80]}\"")
 
-    # unused skills → stale-knowledge candidates
-    try:
-        from skills_engine import SkillBox
-
-        all_skills = {s["skill"] for s in SkillBox(BASE).catalog()}
-        used = set()
-        today = datetime.date.today()
-        for back in range(8):
-            j = (BASE / "vault" / "Journal" /
-                 f"Journal {(today - datetime.timedelta(days=back)).isoformat()}.md")
-            if j.exists():
-                text = j.read_text(encoding="utf-8")
-                used |= {s for s in all_skills if s in text}
-        unused = len(all_skills - used)
-        facts.append(f"{unused} of my {len(all_skills)} skills went "
-                     f"completely unused this week.")
-    except Exception:
-        pass
+    # unused skills → spring-cleaning candidates, named so Kipp can act
+    idle = unused_skills()
+    if len(idle) >= 8:
+        facts.append(f"{len(idle)} skills haven't fired in a fortnight, "
+                     f"including: {', '.join(idle[:8])}. Retiring dead "
+                     f"weight keeps routing fast (moving a folder to "
+                     f"skills_retired/ is how TARS retires a skill).")
     return facts
+
+
+def _library_scout(facts: list[str]) -> str:
+    """Jacob's rule — reuse before rebuild: for capability gaps, look for a
+    real open-source tool and put THAT in front of him."""
+    gap = next((f for f in facts if "I can't" in f), "")
+    if not gap:
+        return ""
+    try:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "find_tool_skill", BASE / "skills" / "find_tool" / "skill.py")
+        ft = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ft)
+        topic = _ollama(
+            "In FIVE words or fewer, name the capability missing here — "
+            "just the capability, no sentence:\n" + gap)[:60]
+        hits = ft.search(topic).get("github", [])[:2]
+        if not hits:
+            return ""
+        return ("Open-source tools that could close this gap: "
+                + "; ".join(f"{h['name']} ({h['stars']} stars, {h['lang']}): "
+                            f"{h['desc'][:80]}" for h in hits))
+    except Exception:
+        return ""
 
 
 def get_proposals() -> list[dict]:
@@ -364,6 +459,9 @@ def _introspect() -> None:
     facts = _evidence()
     if not facts:
         return
+    scouted = _library_scout(facts)
+    if scouted:
+        facts.append(scouted)
     s = _state()
     proposals = s.get("proposals", [])
     known = [p["title"].lower() for p in proposals]
@@ -456,6 +554,10 @@ def _implement_worker(item: dict) -> None:
             f"Transcript evidence this grew from:\n{evidence}\n\n"
             "HARD RULES, no exceptions:\n"
             f"- NEVER touch, read, or copy: {FORBIDDEN}\n"
+            "- Prefer EXISTING open-source libraries over hand-rolled code: "
+            "TARS's find_tool skill searches GitHub and PyPI (import its "
+            "search(query)); a thin wrapper around a maintained library "
+            "beats a bespoke engine.\n"
             "- NEVER add spoken acknowledgments, confirmations, or any "
             "sound before TARS's actual reply — Jacob has explicitly and "
             "repeatedly banned pre-speech noises. You added them once "
@@ -571,6 +673,7 @@ def tick() -> None:
             threading.Thread(target=_introspect, daemon=True).start()
         if now - s.get("last_implement", 0) >= IMPLEMENT_GAP:
             _implement()
+        _drain_queue()  # overnight jobs Jacob left for him
     except Exception:
         pass  # self-improvement must never take down the voice loop
 

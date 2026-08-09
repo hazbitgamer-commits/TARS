@@ -5,6 +5,7 @@ camera, identify() names everyone in a frame. Each person gets a vault note in
 People/ so details attach to them like any other memory.
 """
 import datetime
+import difflib
 import json
 import time
 from pathlib import Path
@@ -123,7 +124,26 @@ def _match(vec: np.ndarray, db: dict) -> str | None:
     return best_name if best_dist < MATCH_THRESHOLD else None
 
 
-def enroll(name: str, frame=None) -> str:
+def _pick(found: list, which: str):
+    """Choose WHICH face Jacob means. Enrolling always took the biggest
+    face, so 'add Emma, the girl in the background' tagged Jacob himself."""
+    which = (which or "").lower()
+    by_size = sorted(found, key=lambda f: -(f["box"][2] * f["box"][3]))
+    by_x = sorted(found, key=lambda f: f["box"][0])
+    if any(w in which for w in ("background", "behind", "further",
+                                "furthest", "back", "smaller", "other",
+                                "not me", "second")):
+        return by_size[-1], "the one further back"
+    if "left" in which:
+        return by_x[0], "the one on the left"
+    if "right" in which:
+        return by_x[-1], "the one on the right"
+    if any(w in which for w in ("closest", "front", "nearest", "me", "this")):
+        return by_size[0], "the closest one"
+    return None if len(found) > 1 else (by_size[0], "")
+
+
+def enroll(name: str, frame=None, which: str = "") -> str:
     import cv2
 
     if frame is None:
@@ -135,9 +155,12 @@ def enroll(name: str, frame=None) -> str:
     found = _faces_in(frame)
     if not found:
         return "I can't make out a face — more light, or come closer."
-    # biggest face in view is the subject
-    target = max(found, key=lambda f: f["box"][2] * f["box"][3])
-    extra = f" (I saw {len(found)} faces and took the closest one.)" if len(found) > 1 else ""
+    picked = _pick(found, which)
+    if picked is None:  # several faces, no hint — ASK instead of guessing
+        return (f"I can see {len(found)} faces. Which one is {name} — the "
+                f"closest one, the one further back, or left or right?")
+    target, note = picked
+    extra = f" (I took {note}.)" if note and len(found) > 1 else ""
 
     db = _db()
     entry = db.setdefault(name, {"embeddings": [], "learned": ""})
@@ -160,6 +183,51 @@ def enroll(name: str, frame=None) -> str:
                         f"- TARS learned {name}'s face on {today} *(photo in faces\\{name}.jpg)*\n",
                         encoding="utf-8")
     return f"Got it — I'll recognise {name} now.{extra}"
+
+
+def known_names() -> list[str]:
+    """Everyone currently enrolled, for 'who do you know' style replies."""
+    return sorted(_db().keys())
+
+
+def find_name(spoken: str) -> str | None:
+    """Match a spoken name against the db loosely (speech-to-text spells names
+    inconsistently), the same way correct_name matches vault entries."""
+    db = _db()
+    if not db:
+        return None
+    if spoken in db:
+        return spoken
+    lspoken = spoken.lower()
+    for known in db:
+        if known.lower() == lspoken:
+            return known
+    best, best_ratio = None, 0.0
+    for known in db:
+        ratio = difflib.SequenceMatcher(None, known.lower(), lspoken).ratio()
+        if ratio > best_ratio:
+            best, best_ratio = known, ratio
+    return best if best_ratio >= 0.6 else None
+
+
+def forget(name: str) -> str:
+    """Remove a learned person from the face database — their embeddings and
+    their reference photo. Their vault note in People/ is left alone, since
+    that's Jacob's memory of them, not the recognition data."""
+    db = _db()
+    if name not in db:
+        return f"I don't have {name} in my face database."
+    del db[name]
+    _save_db(db)
+
+    photo = FACES_DIR / f"{name}.jpg"
+    if photo.exists():
+        try:
+            from send2trash import send2trash
+            send2trash(str(photo))
+        except Exception:
+            pass
+    return f"Done — I've forgotten {name}'s face, I won't recognise them anymore."
 
 
 def identify(frame=None, wait: bool = True) -> list[dict]:
