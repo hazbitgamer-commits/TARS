@@ -6,6 +6,7 @@ settings.json every time).
 """
 import datetime
 import json
+import os
 import threading
 import time
 import urllib.parse
@@ -13,7 +14,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 BASE = Path(__file__).parent
-BRAIN = None  # set by main.py — used by the "Teach TARS" box
+BRAIN = None    # set by main.py — used by the Teach and Talk boxes
+SPEAKER = None  # set by main.py — so typed messages can be answered aloud
+_TYPING = threading.Lock()  # one typed message at a time — the brain isn't reentrant
+_LAST_TYPED_NORM = None  # exact-repeat guard for /api/say — mirrors the
+# voice loop's last_command_norm in main.py (typed side never had it, which
+# is how "whats the weather" typed twice back-to-back ran the skill twice)
 PORT = 8765
 
 state = {"status": "starting"}
@@ -43,6 +49,76 @@ VOICE_IDS = {v["id"] for v in VOICES}
 
 def set_status(s: str) -> None:
     state["status"] = s
+
+
+def _test_portal(data: dict) -> dict:
+    """Try the school portal with what they've typed, and — for schools
+    that aren't SEQTA — work out what system it actually is so it can be
+    supported later. the owner's ask: 'try to detect it and tell me what it is'.
+    """
+    import urllib.request
+
+    url = str(data.get("seqta_url", "")).strip().rstrip("/")
+    if not url:
+        return {"ok": False, "message": "Put the address in first."}
+    if not url.startswith("http"):
+        url = "https://" + url
+
+    # 1. does it answer at all?
+    try:
+        request = urllib.request.Request(
+            url, headers={"User-Agent": "Mozilla/5.0 TARS"})
+        with urllib.request.urlopen(request, timeout=20) as response:
+            body = response.read(120_000).decode("utf-8", "replace").lower()
+            landed = response.geturl().lower()
+    except Exception as e:
+        return {"ok": False,
+                "message": f"Couldn't reach that address ({type(e).__name__}). "
+                           f"Check it's the same one you type into a browser."}
+
+    # 2. what is it?
+    systems = [("SEQTA", ("seqta", "/seqta/")),
+               ("Compass", ("compass.education", "compass school manager")),
+               ("Sentral", ("sentral", "portal.sentral")),
+               ("Daymap", ("daymap",)),
+               ("Schoolbox", ("schoolbox",)),
+               ("Canvas", ("instructure", "canvas lms")),
+               ("Google Classroom", ("classroom.google",)),
+               ("Microsoft/SharePoint", ("sharepoint", "office365", "microsoftonline"))]
+    found = next((name for name, marks in systems
+                  if any(m in body or m in landed for m in marks)), "")
+
+    if found == "SEQTA":
+        try:  # actually log in
+            import seqta
+
+            os.environ["SEQTA_URL"] = url
+            os.environ["SEQTA_USER"] = str(data.get("seqta_user", ""))
+            os.environ["SEQTA_PASS"] = str(data.get("seqta_pass", ""))
+            message = seqta.test()
+            return {"ok": message.lower().startswith("connected"),
+                    "message": message}
+        except Exception as e:
+            return {"ok": False, "message": f"SEQTA test failed: {e}"}
+    if found:
+        return {"ok": False,
+                "message": f"That's {found}, not SEQTA — I can't log into "
+                           f"{found} yet. Tell me your timetable in your own "
+                           f"words instead and everything else still works."}
+    return {"ok": False,
+            "message": "That address answered, but I don't recognise the "
+                       "system it runs. Tell me your timetable yourself and "
+                       "study mode will still work."}
+
+
+def _gestures_took_over() -> bool:
+    """True once the hand-signal watcher wants the webcam."""
+    try:
+        import gestures
+
+        return gestures.active()
+    except Exception:
+        return False
 
 
 def _skills() -> list[dict]:
@@ -254,6 +330,35 @@ class Handler(BaseHTTPRequestHandler):
         elif route == "/brain":
             html = (BASE / "dashboard" / "brain.html").read_bytes()
             self._send(200, html, "text/html; charset=utf-8")
+        elif route == "/setup":
+            html = (BASE / "dashboard" / "setup.html").read_bytes()
+            self._send(200, html, "text/html; charset=utf-8")
+        elif route == "/api/setup":
+            import profile
+
+            self._send(200, json.dumps({"values": profile.public_view(),
+                                        "first_run": profile.needs_setup()}
+                                       ).encode(), "application/json")
+        elif route == "/hud":
+            html = (BASE / "dashboard" / "hud.html").read_bytes()
+            self._send(200, html, "text/html; charset=utf-8")
+        elif route == "/api/camera/live":
+            live = {"watching": False, "hand": "", "last": "", "last_at": 0,
+                    "seen": 0}
+            try:
+                import gestures
+
+                live = gestures.live()
+            except Exception:
+                pass
+            live["status"] = state.get("status", "standby")
+            self._send(200, json.dumps(live).encode(), "application/json")
+        elif route == "/api/camera/frame":
+            stamp, blob = LATEST_JPEG
+            if blob and time.time() - stamp < 5:
+                self._send(200, blob, "image/jpeg")
+            else:
+                self._send(404, b"no frame", "text/plain")
         elif route == "/three.min.js":
             js = (BASE / "dashboard" / "three.min.js").read_bytes()
             self._send(200, js, "application/javascript")
@@ -323,6 +428,78 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(404, b"no", "text/plain")
         elif route == "/api/extras":
             extras = {"lists": {}, "kipp": [], "learning": []}
+            # BEGIN dashboard_panel:games
+            try:
+                import re as _re_dp, winreg as _winreg_dp
+                with _winreg_dp.OpenKey(_winreg_dp.HKEY_CURRENT_USER,
+                                        r"Software\Valve\Steam") as _key_dp:
+                    _sroot_dp = Path(_winreg_dp.QueryValueEx(_key_dp, "SteamPath")[0])
+            except Exception:
+                _sroot_dp = None
+            _sgames_dp = []
+            try:
+                if _sroot_dp:
+                    _slibs_dp = [_sroot_dp / "steamapps"]
+                    _svdf_dp = _sroot_dp / "steamapps" / "libraryfolders.vdf"
+                    if _svdf_dp.exists():
+                        for _sm_dp in _re_dp.finditer(r'"path"\s+"([^"]+)"',
+                                                      _svdf_dp.read_text(encoding="utf-8", errors="ignore")):
+                            _sp_dp = Path(_sm_dp.group(1).replace("\\\\", "\\")) / "steamapps"
+                            if _sp_dp.exists() and _sp_dp not in _slibs_dp:
+                                _slibs_dp.append(_sp_dp)
+                    for _slib_dp in _slibs_dp:
+                        for _acf_dp in _slib_dp.glob("appmanifest_*.acf"):
+                            _stext_dp = _acf_dp.read_text(encoding="utf-8", errors="ignore")
+                            _sname_dp = _re_dp.search(r'"name"\s+"([^"]+)"', _stext_dp)
+                            if not _sname_dp:
+                                continue
+                            _snm_dp = _sname_dp.group(1)
+                            if any(w in _snm_dp.lower() for w in
+                                   ("redistributable", "steamworks", "runtime", "proton")):
+                                continue
+                            _sgames_dp.append({"name": _snm_dp, "touched": _acf_dp.stat().st_mtime})
+                    _sgames_dp.sort(key=lambda g: -g["touched"])
+            except Exception:
+                _sgames_dp = []
+            extras["games"] = [{"name": g["name"]} for g in _sgames_dp[:10]]
+            extras["games_count"] = len(_sgames_dp)
+            # END dashboard_panel:games
+            # BEGIN dashboard_panel:assessments
+            try:
+                import datetime as _dt_dp, sys as _sys_dp
+                sdata = json.loads((BASE / "school.json").read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                sdata = {"work": []}
+            except Exception:
+                sdata = {"work": []}
+            work = [w for w in sdata.get("work", []) if not w.get("done")]
+            try:
+                if str(BASE) not in _sys_dp.path:
+                    _sys_dp.path.insert(0, str(BASE))
+                import seqta as _seqta_dp
+                # cached() not data(): data() re-fetches when the cache ages
+                # out, and the dashboard polls every few seconds — a login
+                # round-trip inside the HTTP handler would stall the page
+                # (and several polls could fire off logins at once)
+                if _seqta_dp.configured():
+                    done_titles = {w["what"].lower() for w in sdata.get("work", []) if w.get("done")}
+                    for item in _seqta_dp.cached().get("due", []):
+                        if item["what"].lower() in done_titles:
+                            continue
+                        label = (f"{item['what']} for {item['subject']}"
+                                 if item.get("subject") else item["what"])
+                        work.append({"what": label, "due": item["due"]})
+            except Exception:
+                pass
+            try:
+                _stamp_dp = _dt_dp.date.today().isoformat()
+                _upcoming_dp = sorted((w for w in work if w.get("due") and w["due"] >= _stamp_dp),
+                                       key=lambda w: w["due"])
+                extras["assessments"] = [{"what": w["what"], "due": w["due"]}
+                                          for w in _upcoming_dp[:6]]
+            except Exception:
+                extras["assessments"] = []
+            # END dashboard_panel:assessments
             try:
                 extras["lists"] = json.loads(
                     (BASE / "lists.json").read_text(encoding="utf-8"))
@@ -331,8 +508,26 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 lines = (BASE / "improvements.log").read_text(
                     encoding="utf-8").splitlines()
-                extras["kipp"] = [l.split(" ", 1)[1] for l in lines
-                                  if "DONE: " in l or "PROPOSED" in l][-4:]
+                # what happened, not just what was attempted: since the
+                # proof gate, a change can be shipped OR reverted, and
+                # the owner should be able to see which at a glance
+                rows = []
+                for line in reversed(lines[-60:]):
+                    body = line.partition(" ")[2]
+                    state_word = ("shipped" if body.startswith("DONE")
+                                  else "reverted" if body.startswith("UNVERIFIED")
+                                  else "asking" if body.startswith("PROPOSAL OFFERED")
+                                  else "proposed" if body.startswith("PROPOSED")
+                                  else "failed" if body.startswith("FAILED")
+                                  else "")
+                    if not state_word:
+                        continue
+                    what = body.split(":", 1)[-1].split("—")[0].strip()[:52]
+                    if what and not any(r["what"] == what for r in rows):
+                        rows.append({"what": what, "state": state_word})
+                    if len(rows) >= 5:
+                        break
+                extras["kipp"] = rows
             except OSError:
                 pass
             try:
@@ -361,7 +556,34 @@ class Handler(BaseHTTPRequestHandler):
     def _stream_camera(self):
         """Live MJPEG feed from the desk webcam — localhost only, released
         the moment the page closes."""
+        global LATEST_JPEG
         import cv2
+
+        # ONE owner of the webcam at a time. When the gesture watcher is
+        # running it holds the camera and publishes frames, so relay those
+        # instead of opening a second capture — both grabbing device 0 ends
+        # with read() failing and a black HUD.
+        try:
+            import gestures
+
+            if gestures.active():
+                self.send_response(200)
+                self.send_header("Content-Type",
+                                 "multipart/x-mixed-replace; boundary=frame")
+                self.end_headers()
+                last = 0.0
+                while gestures.active():
+                    stamp, blob = LATEST_JPEG
+                    if blob and stamp != last:
+                        last = stamp
+                        self.wfile.write(b"--frame\r\nContent-Type: image/jpeg"
+                                         b"\r\n\r\n" + blob + b"\r\n")
+                    time.sleep(0.05)
+                return
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        except Exception:
+            pass
 
         cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
@@ -382,6 +604,8 @@ class Handler(BaseHTTPRequestHandler):
             faces = None
         try:
             while True:
+                if _gestures_took_over():
+                    break  # hand the webcam over rather than fight for it
                 ok, frame = cap.read()
                 if not ok:
                     break
@@ -390,7 +614,6 @@ class Handler(BaseHTTPRequestHandler):
                 ok, clean = cv2.imencode(".jpg", frame,
                                          [cv2.IMWRITE_JPEG_QUALITY, 80])
                 if ok:
-                    global LATEST_JPEG
                     LATEST_JPEG = (time.time(), clean.tobytes())
                 # nametags: refresh every ~2s, never block the feed on loading
                 frame_n += 1
@@ -446,6 +669,59 @@ class Handler(BaseHTTPRequestHandler):
                            json.dumps({"ok": ok}).encode(), "application/json")
             except Exception:
                 self._send(500, b'{"ok": false}', "application/json")
+        elif self.path == "/api/say":
+            # type to TARS instead of talking — same brain, same skills
+            length = int(self.headers.get("Content-Length", 0))
+            data = json.loads(self.rfile.read(length))
+            text = str(data.get("text", "")).strip()[:800]
+            if not text or BRAIN is None:
+                self._send(503, b'{"error": "not ready"}', "application/json")
+            elif not _TYPING.acquire(blocking=False):
+                self._send(200, json.dumps(
+                    {"reply": "Hang on — still finishing the last one."}
+                ).encode(), "application/json")
+            else:
+                try:
+                    import main
+
+                    main.log("heard", f"[typed] {text}")
+                    global _LAST_TYPED_NORM
+                    norm = text.lower().rstrip(".!? ")
+                    if norm and norm == _LAST_TYPED_NORM:
+                        # same exact message twice in a row — almost always
+                        # means the first one didn't land, not a deliberate
+                        # repeat. Same call main.py's voice loop makes.
+                        reply = ("That's the same thing again — did I miss "
+                                 "it, or did you mean something else?")
+                        _LAST_TYPED_NORM = None
+                    else:
+                        _LAST_TYPED_NORM = norm
+                        # typed on his own PC's localhost dashboard — that's
+                        # him, and it must not inherit whoever spoke last
+                        BRAIN.speaker_name = "the owner"
+                        reply = BRAIN.handle(text) or "..."
+                    main.log("said", reply)
+                    if data.get("speak") and SPEAKER is not None:
+                        # flag the status while it talks — the camera HUD's
+                        # speaking cue reads this, and only the VOICE loop
+                        # was setting it, so typed replies lit nothing up
+                        def _talk(words: str) -> None:
+                            was = state.get("status", "standby")
+                            set_status("speaking")
+                            try:
+                                SPEAKER.say(words)
+                            finally:
+                                set_status(was)
+
+                        threading.Thread(target=_talk, args=(reply,),
+                                         daemon=True).start()
+                    self._send(200, json.dumps({"reply": reply}).encode(),
+                               "application/json")
+                except Exception as e:
+                    self._send(500, json.dumps({"reply": f"That went wrong: {e}"}
+                                               ).encode(), "application/json")
+                finally:
+                    _TYPING.release()
         elif self.path == "/api/routines/run":
             length = int(self.headers.get("Content-Length", 0))
             data = json.loads(self.rfile.read(length))
@@ -487,6 +763,27 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, b'{"ok": true}', "application/json")
                 except Exception:
                     self._send(500, b'{"error": "failed"}', "application/json")
+        elif self.path.startswith("/api/setup"):
+            import profile
+
+            length = int(self.headers.get("Content-Length", 0))
+            data = json.loads(self.rfile.read(length) or b"{}")
+            if self.path == "/api/setup/reveal":
+                # his own details, on his own machine — people forget school
+                # passwords, and he asked to be able to read them back
+                self._send(200, json.dumps(profile.reveal()).encode(),
+                           "application/json")
+            elif self.path == "/api/setup/test":
+                self._send(200, json.dumps(_test_portal(data)).encode(),
+                           "application/json")
+            else:
+                try:
+                    profile.save(data)
+                    name = profile.owner_or("")
+                    self._send(200, json.dumps({"ok": True, "name": name}
+                                               ).encode(), "application/json")
+                except Exception:
+                    self._send(500, b'{"ok": false}', "application/json")
         elif self.path == "/api/shutdown":
             # the window's power button: reply first, then die cleanly
             self._send(200, b'{"bye": true}', "application/json")

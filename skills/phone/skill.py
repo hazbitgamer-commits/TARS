@@ -17,7 +17,7 @@ ARGS = {"action": "'status' (default), 'send' (a message), or 'design'",
 SETUP = ("To put me on your phone: in Telegram, message BotFather, send "
          "slash new bot, pick a name, and he'll give you a token. Tell "
          "Claude that token and he'll wire it up. Then text me: hey TARS "
-         "it's Jacob.")
+         "it's the owner.")
 
 
 def run(args: dict) -> str:
@@ -35,7 +35,7 @@ def run(args: dict) -> str:
         return "My phone bridge isn't set up yet. " + SETUP
     if not tars_phone.paired():
         return ("The bridge is running but no phone is paired yet — text "
-                "the bot: hey TARS it's Jacob.")
+                "the bot: hey TARS it's the owner.")
 
     if action in ("send", "text", "message"):
         text = str(args.get("text") or "").strip()

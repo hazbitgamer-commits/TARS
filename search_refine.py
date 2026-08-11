@@ -1,10 +1,10 @@
 """Predictive search & query refinement.
 
-Jacob often has to re-ask or correct a search-type request (web_search,
+the owner often has to re-ask or correct a search-type request (web_search,
 browser_search, search_files) when TARS's first read on it misses the mark.
-This remembers those rephrasings — if a new query closely matches one Jacob
+This remembers those rephrasings — if a new query closely matches one the owner
 previously reworded, the reworded version is used automatically, so the
-first attempt lands more often and Jacob has to correct less.
+first attempt lands more often and the owner has to correct less.
 
 Small, self-contained, and persisted to a plain JSON file in the project
 root (same pattern as agents_state.json / proactive_state.json) — no vault,
@@ -67,7 +67,7 @@ class SearchMemory:
         return None
 
     def refine(self, skill: str, args: dict) -> dict:
-        """Before a search runs: if Jacob previously reworded a close match
+        """Before a search runs: if the owner previously reworded a close match
         of this query, use that wording instead of the fresh one."""
         key = self._query_key(skill, args)
         if not key:
@@ -81,7 +81,7 @@ class SearchMemory:
 
     def observe(self, skill: str, args: dict) -> None:
         """After a search runs: if it followed a different-but-similar search
-        soon after, treat it as Jacob refining/correcting his ask, and
+        soon after, treat it as the owner refining/correcting his ask, and
         remember the better wording for next time."""
         key = self._query_key(skill, args)
         if not key:

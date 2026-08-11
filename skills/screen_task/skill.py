@@ -4,7 +4,7 @@ the spoken chain into steps; each step runs on the click_screen machinery
 (instant UIA finds, vision fallback); "find/choose" steps READ the page's
 element names (titles, durations, channels ride along in the accessibility
 tree) and pick the best match before clicking it. Honest partial reports:
-if step 3 of 4 fails, Jacob hears exactly how far it got."""
+if step 3 of 4 fails, the owner hears exactly how far it got."""
 import importlib.util
 import json
 import time
@@ -21,7 +21,7 @@ DESCRIPTION = ("Do a CHAIN of screen actions in one go: 'click the search "
                "longer and click it'. Handles click → type → find-and-pick "
                "sequences on whatever's on screen. Use for MULTI-step screen "
                "jobs; a single click or search is click_screen.")
-ARGS = {"instruction": "the whole multi-step request in Jacob's words"}
+ARGS = {"instruction": "the whole multi-step request in the owner's words"}
 
 
 def _click_screen():

@@ -1,4 +1,4 @@
-"""Guest mode: when Sophie or mates are around, TARS keeps Jacob's
+"""Guest mode: when Sophie or mates are around, TARS keeps the owner's
 personal facts to himself and stays politely generic. Voice on/off."""
 import json
 from pathlib import Path
@@ -7,7 +7,7 @@ BASE = Path(__file__).resolve().parents[2]
 FILE = BASE / "guest_mode.json"
 
 DESCRIPTION = ("GUEST MODE on/off — 'guest mode on' when someone's around "
-               "(TARS hides Jacob's personal facts and keeps it generic and "
+               "(TARS hides the owner's personal facts and keeps it generic and "
                "polite), 'guest mode off' when they leave, 'is guest mode "
                "on'. NOT the same as sleep mode.")
 ARGS = {"state": "'on', 'off', or 'status'"}

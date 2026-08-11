@@ -1,6 +1,6 @@
 """TARS-native text-to-CAD: "design me a 40 millimeter cable hook" →
 Claude writes a parametric OpenSCAD model → preview PNG opens + print-ready
-STL saved in workshop/designs/. v2 (Jacob's asks): list/load saved designs,
+STL saved in workshop/designs/. v2 (the owner's asks): list/load saved designs,
 open any design in OpenSCAD's rotatable 3D viewer, and after each design
 TARS asks whether to change anything (the brain routes the answer back
 here as an iteration)."""
@@ -16,13 +16,16 @@ OPENSCAD_WIN = r"C:\Program Files\OpenSCAD\openscad.exe"
 
 DESCRIPTION = ("DESIGN real 3D objects from a description and manage the "
                "collection — 'design me a phone stand' (creates, previews, "
-               "saves STL), 'what designs do I have' (list), 'load my cable "
-               "hook design' / 'open it so I can rotate it' (opens the "
-               "design in the rotatable 3D viewer). NOT the Mini CAD "
-               "drawing app (cad) and NOT the CADAM website (open_app).")
+               "saves STL), 'what designs do I have' (list, optionally "
+               "filtered by a word e.g. 'what fast designs do I have'), "
+               "'load my cable hook design' / 'open it so I can rotate it' "
+               "(opens the design in the rotatable 3D viewer). NOT the Mini "
+               "CAD drawing app (cad) and NOT the CADAM website (open_app).")
 ARGS = {"request": "for designing: the object and any sizes",
         "action": "'design' (default), 'list', or 'load'",
-        "name": "for load: which saved design, or 'latest'"}
+        "name": "for load: which saved design, or 'latest'",
+        "filter": "for list: optional word to only show designs whose name "
+                  "contains it, e.g. 'fast'"}
 
 
 def _openscad() -> str:
@@ -57,7 +60,7 @@ def _find(name: str) -> Path | None:
 def _from_photo(request: str, size_hint: str = "") -> str:
     """'Design a stand for this' — TARS looks through the camera, describes
     the object honestly, and designs around it. A photo alone can't give
-    true millimetres, so he asks for ONE real measurement unless Jacob
+    true millimetres, so he asks for ONE real measurement unless the owner
     already said one (that honesty beats a beautifully-wrong part)."""
     import base64
     import io
@@ -87,7 +90,7 @@ def _from_photo(request: str, size_hint: str = "") -> str:
             "model": "qwen2.5vl:7b", "stream": False, "keep_alive": "30m",
             "messages": [{"role": "user", "images": [base64.b64encode(shot).decode()],
                           "content": (
-                "Jacob is holding an object up to the camera and wants a 3D "
+                "the owner is holding an object up to the camera and wants a 3D "
                 "part designed for it. Describe ONLY the object: what it is, "
                 "its shape, and its rough proportions (e.g. 'roughly twice as "
                 "tall as it is wide'). Two sentences, no guessing at exact "
@@ -105,7 +108,7 @@ def _from_photo(request: str, size_hint: str = "") -> str:
         return (f"I can see {seen[:160]} To get the fit right I need one "
                 f"real measurement — how wide is it, in millimetres?")
     return _design_task(f"{request}. The object, seen through the camera: "
-                        f"{seen}. Jacob's measurement: {size_hint or request}")
+                        f"{seen}. the owner's measurement: {size_hint or request}")
 
 
 def _tweak(request: str, target: str = "latest") -> str:
@@ -134,7 +137,7 @@ def _tweak(request: str, target: str = "latest") -> str:
             "keep_alive": "2h",
             "messages": [{"role": "user", "content":
                 f"OpenSCAD model variables (millimetres):\n{menu}\n\n"
-                f"Jacob says: {request!r}\n"
+                f"the owner says: {request!r}\n"
                 "Which ONE variable changes, and to what new number? Reply "
                 'JSON: {"var": "<exact name>", "value": <number>} — or '
                 '{"var": ""} if no single variable covers it.'}],
@@ -175,11 +178,17 @@ def run(args: dict) -> str:
         scads = _saved()
         if not scads:
             return "No saved designs yet — say design me something."
+        keyword = str(args.get("filter") or "").strip().lower()
+        if keyword:
+            scads = [p for p in scads if keyword in p.stem.lower().replace("_", " ")]
+            if not scads:
+                return f"No designs matching '{keyword}'."
         import datetime
 
         items = [f"{p.stem.replace('_', ' ')} ({datetime.date.fromtimestamp(p.stat().st_mtime):%d %b})"
                  for p in scads[:8]]
-        return (f"You've got {len(scads)} design{'s' if len(scads) != 1 else ''}: "
+        return (f"You've got {len(scads)} design{'s' if len(scads) != 1 else ''}"
+                + (f" matching '{keyword}'" if keyword else "") + ": "
                 + "; ".join(items)
                 + ". Say load, then the name, to open one in the 3D viewer.")
 
@@ -188,7 +197,7 @@ def run(args: dict) -> str:
         if p is None:
             return ("I can't find that design. Say 'what designs do I have' "
                     "to hear the list.")
-        # Jacob's pick (2026-08-08): the OpenSCAD viewer is THE viewer —
+        # the owner's pick (2026-08-08): the OpenSCAD viewer is THE viewer —
         # professional orbit/zoom + live tweakable dimensions
         try:
             subprocess.Popen([_openscad(), str(p)], cwd=str(DESIGNS))
@@ -246,7 +255,7 @@ def _design_task(request: str) -> str:
 
     DESIGNS.mkdir(parents=True, exist_ok=True)
     task = (
-        f"TEXT-TO-CAD DESIGN JOB. Jacob asked: {request!r}\n"
+        f"TEXT-TO-CAD DESIGN JOB. the owner asked: {request!r}\n"
         f"1. Write a clean PARAMETRIC OpenSCAD model to a new file in "
         f"{DESIGNS}\\<short_snake_name>.scad — adjustable dimensions as "
         f"named variables at the top with comments, sensible printable "
@@ -259,7 +268,7 @@ def _design_task(request: str) -> str:
         f"clean.\n"
         f"3. Do NOT open the PNG. Instead auto-open the interactive 3D "
         f"viewer: launch \"{_openscad()}\" <name>.scad DETACHED (e.g. "
-        f"subprocess.Popen, do not wait on it) so Jacob immediately gets "
+        f"subprocess.Popen, do not wait on it) so the owner immediately gets "
         f"the rotatable view with live dimensions.\n"
         f"4. End SPOKEN with exactly this question: 'It's on your screen — "
         f"drag to rotate. Want me to change anything?' — after naming the "

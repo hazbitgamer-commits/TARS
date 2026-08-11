@@ -1,5 +1,5 @@
 """Where am I running? — TARS's platform awareness (Phase 1 of universal
-TARS, 2026-08-07, target: Jacob's mate's MacBook).
+TARS, 2026-08-07, target: the owner's mate's MacBook).
 
 Windows = the full body. Mac/Linux = TARS Lite: the complete thinking
 stack (Ollama chat/routing, Whisper hearing, Kokoro voice, dashboard,
@@ -28,7 +28,11 @@ BLOCKED_OFF_WINDOWS = {
     "open_app", "close_app", "close_window", "manage_window", "list_windows",
     "steam", "lock_pc", "run_command", "screenshot", "screen_check",
     "brightness", "look_at_screen", "click_screen", "screen_task", "tabs",
-    "camera", "camera_feed", "face_learn", "face_who", "object_detection",
+    # camera_feed and signals stay AVAILABLE off Windows: the HUD is a web
+    # page and hand signals need only mediapipe + the webcam (~200MB), not
+    # the 6GB vision model. "camera" (what can you see) does need it, so it
+    # stays blocked on 16GB Lite machines.
+    "camera", "face_learn", "face_who", "object_detection",
     "voice_output", "delete_files", "organize", "type_text", "keyboard",
     "media", "dictation", "vacuum", "vacuum_room", "vacuum_speed",
     "speakers", "quiet_hours",
@@ -70,7 +74,100 @@ def python_cmd(base: Path | None = None) -> str:
     return exe.replace("pythonw.exe", "python.exe")
 
 
+# ---------- the small cross-platform primitives ----------
+# Written once here rather than re-guessed in every skill: os.startfile is
+# Windows-only and throws AttributeError on a Mac, which is how half the
+# "naked" skills would have crashed on the owner's mates' machines.
+
+def open_file(path) -> bool:
+    """Open a file or folder in whatever the OS uses for it."""
+    import subprocess
+
+    target = str(path)
+    try:
+        if IS_WINDOWS:
+            os.startfile(target)  # type: ignore[attr-defined]
+        elif IS_MAC:
+            subprocess.Popen(["open", target])
+        else:
+            subprocess.Popen(["xdg-open", target])
+        return True
+    except Exception:
+        return False
+
+
+def browser_exe() -> str:
+    """Path/command for a Chromium browser that supports --app windows."""
+    candidates = []
+    if IS_WINDOWS:
+        local = os.environ.get("LOCALAPPDATA", "")
+        candidates = [
+            Path(local) / "BraveSoftware/Brave-Browser/Application/brave.exe",
+            Path(r"C:\Program Files\BraveSoftware\Brave-Browser"
+                 r"\Application\brave.exe"),
+            Path(r"C:\Program Files (x86)\Microsoft\Edge\Application"
+                 r"\msedge.exe"),
+        ]
+    elif IS_MAC:
+        candidates = [
+            Path("/Applications/Brave Browser.app/Contents/MacOS/"
+                 "Brave Browser"),
+            Path("/Applications/Google Chrome.app/Contents/MacOS/"
+                 "Google Chrome"),
+            Path("/Applications/Microsoft Edge.app/Contents/MacOS/"
+                 "Microsoft Edge"),
+        ]
+    else:
+        for name in ("brave-browser", "google-chrome", "chromium"):
+            import shutil as _sh
+
+            found = _sh.which(name)
+            if found:
+                return found
+    for exe in candidates:
+        if exe.exists():
+            return str(exe)
+    return ""
+
+
+def browser_data_dirs() -> list:
+    """Where Chromium browsers keep their profiles — used by history
+    search, which was reading %LOCALAPPDATA% and finding nothing on Mac."""
+    home = Path.home()
+    if IS_WINDOWS:
+        local = Path(os.environ.get("LOCALAPPDATA", ""))
+        return [local / "BraveSoftware/Brave-Browser/User Data",
+                local / "Google/Chrome/User Data",
+                local / "Microsoft/Edge/User Data"]
+    if IS_MAC:
+        support = home / "Library/Application Support"
+        return [support / "BraveSoftware/Brave-Browser",
+                support / "Google/Chrome",
+                support / "Microsoft Edge"]
+    return [home / ".config/BraveSoftware/Brave-Browser",
+            home / ".config/google-chrome",
+            home / ".config/chromium"]
+
+
+def camera_backend():
+    """cv2 capture backend for this OS. DirectShow on Windows (MSMF can't
+    grab on the owner's webcam); AVFoundation on Mac; default elsewhere."""
+    try:
+        import cv2
+    except Exception:
+        return None
+    if IS_WINDOWS:
+        return cv2.CAP_DSHOW
+    if IS_MAC:
+        return cv2.CAP_AVFOUNDATION
+    return cv2.CAP_ANY
+
+
 def unavailable(feature: str) -> str:
-    """A spoken, honest 'not on this machine' line."""
-    return (f"I can't do {feature} on {PLATFORM_NAME} yet — that part of "
-            f"me is still Windows-only.")
+    """A spoken, honest 'not on this machine' line — said instead of
+    letting chat improvise around a missing ability."""
+    where = "this Mac" if IS_MAC else PLATFORM_NAME
+    if IS_WINDOWS:  # forced Lite for testing
+        return f"({feature} is switched off — Lite test mode.)"
+    return (f"I can't do {feature} on {where} — that's one of my "
+            f"Windows-only parts. Everything else works.")

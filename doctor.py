@@ -5,7 +5,7 @@ what it can, and explains the rest in plain English.
   python doctor.py --quick    silent startup check (returns problems only)
   python doctor.py --no-fix   diagnose only, change nothing
 
-Jacob's mate's Mac install took nine rounds of screenshots; this exists so
+the owner's mate's Mac install took nine rounds of screenshots; this exists so
 the next person's takes one. Voice: "run a self check" / "are you healthy".
 """
 import json
@@ -43,7 +43,7 @@ MODEL_FILES = [
      "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"),
 ]
 
-problems: list[str] = []   # plain-English, spoken to Jacob
+problems: list[str] = []   # plain-English, spoken to the owner
 fixed: list[str] = []
 FIX = True
 
@@ -183,13 +183,22 @@ def check_audio() -> None:
         rec = sd.rec(int(16000 * 1.2), samplerate=16000, channels=1,
                      dtype="float32", device=idx)
         sd.wait()
-        if float(np.sqrt(np.mean(rec ** 2))) < 0.0002:
+        # A working mic in a quiet room still has a noise floor (the owner's
+        # reads about 0.003). PURE zeros mean the device gave us nothing —
+        # muted, disabled, or already open elsewhere. The old test called a
+        # quiet room a broken microphone and sent him to Windows settings
+        # five times in one day while his voice commands were working fine.
+        if not np.any(rec):
             problems.append(
-                "my microphone is silent — "
-                + ("check Windows Settings, Privacy, Microphone"
-                   if IS_WIN else
-                   "allow Microphone for Terminal in System Settings, "
-                   "Privacy and Security"))
+                "my microphone handed back pure silence — it's muted or "
+                "disabled, or something else has hold of it"
+                + ("" if IS_WIN else
+                   " (check Microphone permission in System Settings)"))
+        elif float(np.sqrt(np.mean(rec ** 2))) < 0.00002:
+            problems.append(
+                "my microphone is barely registering anything — "
+                + ("check its level in Windows sound settings"
+                   if IS_WIN else "check its input level in System Settings"))
         if not any(d["max_output_channels"] > 0 for d in sd.query_devices()):
             problems.append("I have no speakers to talk through")
     except Exception as e:
@@ -207,7 +216,7 @@ def check_extras() -> None:
     text = env.read_text(encoding="utf-8") if env.exists() else ""
     if "CLAUDE_CODE_OAUTH_TOKEN" not in text:
         problems.append("my big brain isn't connected — "
-                        "Jacob needs to run claude setup-token")
+                        "the owner needs to run claude setup-token")
     free = shutil.disk_usage(BASE).free / 1e9
     if free < 3:
         problems.append(f"only {free:.1f} gigabytes of disk space left")

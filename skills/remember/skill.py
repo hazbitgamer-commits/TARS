@@ -13,9 +13,9 @@ MODEL = bg_model()
 
 DESCRIPTION = ("Save a fact to TARS's permanent memory vault. E.g. 'remember that I like "
                "short answers in the morning', 'remember my wifi password is on the fridge'.")
-ARGS = {"fact": "the fact to remember, in Jacob's words"}
+ARGS = {"fact": "the fact to remember, in the owner's words"}
 
-FOLDERS = ("About Jacob", "Knowledge", "Projects")
+FOLDERS = ("About the owner", "Knowledge", "Projects")
 
 
 def _classify(fact: str) -> dict:
@@ -24,8 +24,8 @@ def _classify(fact: str) -> dict:
             "model": MODEL, "stream": False, "think": False, "format": "json",
             "messages": [{"role": "user", "content":
                 f"Classify this memory for a personal assistant's vault: {fact!r}\n"
-                f'Reply as JSON: {{"folder": "About Jacob" (facts/preferences about '
-                f'Jacob) | "Knowledge" (facts about the world/things) | "Projects" '
+                f'Reply as JSON: {{"folder": "About the owner" (facts/preferences about '
+                f'the owner) | "Knowledge" (facts about the world/things) | "Projects" '
                 f'(ongoing work), "title": "<3-6 word note title>", '
                 f'"tags": ["<one-word-tag>", ...max 3]}}'}],
             "options": {"temperature": 0}}, timeout=60)

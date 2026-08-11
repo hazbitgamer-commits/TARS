@@ -120,7 +120,7 @@ class NeuronBrain:
         return {m for m in re.findall(r"\[\[([^\]|#]+)", text) if m in self.neurons}
 
     # ---------- the living part ----------
-    def stimulate(self, text: str, source: str = "jacob") -> list[dict]:
+    def stimulate(self, text: str, source: str = "owner") -> list[dict]:
         """Fire the neurons closest in meaning; spread; learn (STDP)."""
         self.reindex()
         if not len(self.vectors):
@@ -211,7 +211,7 @@ class NeuronBrain:
             syn["linked"] = True
         self._save()
 
-    def recall(self, text: str, source: str = "jacob") -> str:
+    def recall(self, text: str, source: str = "owner") -> str:
         """Fire on the text and return snippet context for the chat prompt."""
         fired = self.stimulate(text, source)
         bits = []

@@ -1,6 +1,6 @@
 """Voice file organizer: "move the screenshots from downloads into a
 folder called Basel." MOVES only — never deletes, never overwrites
-(collisions get a numbered suffix), and only inside Jacob's own user
+(collisions get a numbered suffix), and only inside the owner's own user
 folders. Big moves (>20 files) require a spoken yes via the same confirm
 flow as deletion."""
 import shutil
@@ -17,10 +17,10 @@ KINDS = {"screenshot": ("*.png", "*.jpg"), "picture": ("*.png", "*.jpg",
          "*.msi"), "zip": ("*.zip", "*.7z", "*.rar")}
 
 DESCRIPTION = ("ORGANIZE files by voice — move files matching a "
-               "description from one of Jacob's folders into a (new or "
+               "description from one of the owner's folders into a (new or "
                "existing) folder: 'move the screenshots from downloads "
                "into a folder called Setup', 'put the PDFs on my desktop "
-               "into Documents'. Only MOVES within Jacob's own folders — "
+               "into Documents'. Only MOVES within the owner's own folders — "
                "never deletes. NOT for finding/opening files "
                "(search_files) and NOT for deleting (delete_files).")
 ARGS = {"what": "which files: 'screenshots', 'pdfs', 'videos', or a "
@@ -29,7 +29,7 @@ ARGS = {"what": "which files: 'screenshots', 'pdfs', 'videos', or a "
                   "pictures/videos",
         "dest": "destination folder name (created if needed), e.g. "
                 "'a folder called Setup' -> 'Setup'",
-        "confirmed": "'true' only when Jacob already said yes to a big move"}
+        "confirmed": "'true' only when the owner already said yes to a big move"}
 
 
 def _match(src: Path, what: str) -> list[Path]:

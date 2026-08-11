@@ -1,4 +1,4 @@
-"""Jacob's idea inbox — "TARS, idea: a shot-tracker overlay for Goal Mystro"
+"""the owner's idea inbox — "TARS, idea: a shot-tracker overlay for Goal Mystro"
 lands in ideas.json instead of evaporating, tagged to a project when one is
 mentioned, and resurfaced on demand ("what were my ideas for Undergrid")."""
 import datetime
@@ -11,12 +11,12 @@ PROJECTS = ("tars", "goal mystro", "goal_mystro", "undergrid", "case",
             "hackquest", "chameleon", "rested", "solax", "solar", "vision",
             "fc26", "market tracker", "cad")
 
-DESCRIPTION = ("Jacob's IDEA INBOX — capture a passing idea ('idea: add a "
+DESCRIPTION = ("the owner's IDEA INBOX — capture a passing idea ('idea: add a "
                "shot tracker to Goal Mystro', 'note down an idea for "
                "Undergrid'), hear them back ('what were my ideas', 'ideas "
                "for Undergrid'), or clear done ones ('drop the shot tracker "
                "idea'). NOT for to-do chores (lists) and NOT for durable "
-               "facts about Jacob (remember).")
+               "facts about the owner (remember).")
 ARGS = {"action": "'add' (default), 'list', or 'remove'",
         "idea": "the idea text",
         "project": "optional project it belongs to"}

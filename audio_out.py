@@ -93,7 +93,7 @@ def output_index() -> int | None:
     """The saved output device, re-resolved fresh (5s cache). tts passes
     this to EVERY play — sd.default silently reverts to system default
     whenever the mic-crash recovery reinitializes PortAudio, which once
-    left Jacob's voice on unworn headphones while he sat at the monitor."""
+    left the owner's voice on unworn headphones while he sat at the monitor."""
     import time
 
     if time.time() - _out_cache["t"] < 5:

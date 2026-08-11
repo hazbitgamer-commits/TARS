@@ -44,7 +44,7 @@ def _day_from(when: str) -> datetime.date:
 def _fmt_time(iso: str) -> str:
     if "T" not in iso:
         return "all day"
-    # the calendar may store times in another timezone — speak Jacob's local time
+    # the calendar may store times in another timezone — speak the owner's local time
     t = datetime.datetime.fromisoformat(iso).astimezone()
     return t.strftime("%I:%M %p").lstrip("0").replace(":00 ", " ")
 

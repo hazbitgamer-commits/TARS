@@ -1,7 +1,7 @@
 # find_address
 
 Looks up the real-world street/postal address of a place, business, or
-landmark by name, and speaks it back to Jacob.
+landmark by name, and speaks it back to the owner.
 
 Uses OpenStreetMap's free Nominatim geocoding service — the same one
 `map_view` already uses internally to drop pins — so there's no API key

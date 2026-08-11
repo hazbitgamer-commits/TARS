@@ -9,10 +9,10 @@ from pathlib import Path
 
 import requests
 
-DESCRIPTION = ("LOOK at Jacob's screen and describe or answer questions about what's "
+DESCRIPTION = ("LOOK at the owner's screen and describe or answer questions about what's "
                "visible. E.g. 'what's on my screen', 'look at my screen and tell me "
                "what game this is', 'read the error message on screen'.")
-ARGS = {"question": "what Jacob wants to know about the screen (default: describe it)",
+ARGS = {"question": "what the owner wants to know about the screen (default: describe it)",
         "monitor": "'left' for the left screen, otherwise the main one"}
 
 OLLAMA_URL = "http://127.0.0.1:11434/api/chat"

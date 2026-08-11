@@ -22,7 +22,7 @@ ARGS = {"voice": "a name/description like 'ryan', 'sonia', 'british female', "
         "rate": "+N or -N to nudge speaking speed percent, a plain number for an "
                 "absolute speed percent (e.g. '20' means +20%), or 'get' to just "
                 "read the current settings",
-        "style": "'smooth' when Jacob wants fewer pauses at commas/full stops, "
+        "style": "'smooth' when the owner wants fewer pauses at commas/full stops, "
                  "'normal' to restore standard pausing"}
 
 # friendly words -> voice ids (bm_/bf_ = the local Kokoro voices, more human;

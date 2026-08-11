@@ -1,6 +1,6 @@
 """Quiet hours: a no-technology schedule for the house. Stored in quiet_hours.json.
 
-This remembers the schedule Jacob wants (e.g. no phones/screens/tech from 8 pm to
+This remembers the schedule the owner wants (e.g. no phones/screens/tech from 8 pm to
 7 am) and can report whether it's active right now. It does not control any
 devices itself — there's no smart-home hookup here, just the schedule + a
 reminder of it.
@@ -13,7 +13,7 @@ DESCRIPTION = ("Set or check 'quiet hours' — the overnight window when TARS wo
                "make noise on the house speakers (and future smart-home devices). "
                "E.g. 'add quiet hours from 8 pm to 7 am', 'are we in quiet hours "
                "right now'. During quiet hours, speaker announcements are blocked "
-               "unless Jacob explicitly says to override. It does not affect the "
+               "unless the owner explicitly says to override. It does not affect the "
                "PC itself.")
 ARGS = {"action": "'set' to save a new quiet-hours schedule, or 'status'/'get' to check it "
                    "(default: 'set' if start/end given, otherwise 'status')",

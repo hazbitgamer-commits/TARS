@@ -1,5 +1,5 @@
 """Look up the real-world address of a place, business, or landmark by
-name — spoken back to Jacob. Uses OpenStreetMap's free Nominatim geocoder
+name — spoken back to the owner. Uses OpenStreetMap's free Nominatim geocoder
 (no key, no cost), the same service map_view already uses to place map
 markers. This skill just reads the address out loud instead of drawing it
 on the dashboard map."""

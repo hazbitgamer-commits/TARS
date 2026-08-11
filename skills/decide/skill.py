@@ -1,8 +1,8 @@
-"""Quick random decision helper for when Jacob says things like 'I'm not sure'."""
+"""Quick random decision helper for when the owner says things like 'I'm not sure'."""
 import random
 import re
 
-DESCRIPTION = ("Helps Jacob make a quick decision when he's unsure — flips a coin, rolls a "
+DESCRIPTION = ("Helps the owner make a quick decision when he's unsure — flips a coin, rolls a "
                "die, gives a magic-8-ball style yes/no answer, or randomly picks one option "
                "from a list he names. E.g. 'flip a coin', 'I'm not too sure', 'roll a die', "
                "'should I go for a walk', 'pick one: pizza or tacos'. NOT for anything needing "

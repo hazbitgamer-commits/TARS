@@ -58,5 +58,18 @@ class SkillBox:
     def run(self, name: str, args: dict | None) -> str | None:
         mod = self.load().get(name)
         if mod is None:
+            # A skill that EXISTS but is switched off for this platform must
+            # say so. Returning None dropped the command into chat, which
+            # waffled ("I can help with that, but I need you to give me the
+            # command to open Spotify as a task") — on a Mac that would be
+            # the answer to all 33 Windows-only abilities.
+            if (self.dir / name / "skill.py").exists():
+                try:
+                    from platform_caps import blocked_skills, unavailable
+
+                    if name in blocked_skills():
+                        return unavailable(name.replace("_", " "))
+                except Exception:
+                    pass
             return None
         return mod.run(args or {})

@@ -1,7 +1,7 @@
 """'Clear the name Emma from this database' — TARS forgets a learned face.
 
 Removes that person's face signatures + reference photo from faces/faces.json
-and faces/<name>.jpg. Their vault note under People/ (any facts Jacob told
+and faces/<name>.jpg. Their vault note under People/ (any facts the owner told
 TARS about them) is left untouched — this only clears face RECOGNITION data.
 
 Deleting is irreversible (short of relearning the face from scratch), so a
@@ -19,11 +19,11 @@ sys.path.insert(0, str(BASE))
 
 DESCRIPTION = ("DELETE / forget a name from the camera face recognition database, so "
                "TARS stops recognising that person on camera. E.g. 'clear the name "
-               "Emma from this database', 'forget Luke's face', 'delete Jacob from "
+               "Emma from this database', 'forget Luke's face', 'delete the owner from "
                "the face database', 'remove that person you learned'. NOT for "
                "learning a new face (face_learn) or asking who's on camera (face_who).")
 ARGS = {"name": "the person's name to remove from the face database",
-        "confirmed": "leave empty — the brain sets 'true' only after Jacob says yes"}
+        "confirmed": "leave empty — the brain sets 'true' only after the owner says yes"}
 
 REPEAT_WINDOW = 30  # seconds — a second forget of the SAME name this soon is
 # probably an accidental repeat, not a fresh intentional ask

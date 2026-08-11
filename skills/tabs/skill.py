@@ -7,11 +7,16 @@ BASE = Path(__file__).resolve().parents[2]
 
 DESCRIPTION = ("Browser TABS — 'switch to the YouTube tab', 'go to the "
                "gmail tab', 'close this tab', 'close the shopping tab', "
-               "'what tabs are open'. Works on the browser's actual tab "
-               "strip. NOT for closing whole windows (close_window) and "
-               "NOT for opening apps (open_app).")
-ARGS = {"action": "'switch', 'close', or 'list'",
+               "'open a new tab', 'what tabs are open'. Works on the "
+               "browser's actual tab strip. NOT for closing whole windows "
+               "(close_window) and NOT for opening apps (open_app).")
+ARGS = {"action": "'switch', 'close', 'new', or 'list'",
         "tab": "part of the tab's name, or 'this' for the current tab"}
+
+# words that name no tab at all — they arrive when a command was misrouted
+# ("open them in my browser" once became a tab search for nothing)
+VAGUE = {"", "them", "those", "these", "it", "that", "they", "one", "a", "new",
+         "tab", "tabs", "some"}
 
 
 def _cs():
@@ -55,10 +60,21 @@ def run(args: dict) -> str:
     action = str(args.get("action", "list")).strip().lower()
     want = str(args.get("tab", "")).strip().lower()
 
+    if action in ("new", "open"):
+        import webbrowser
+
+        webbrowser.open_new_tab("about:blank")
+        return "New tab open."
+
     win, tabs = _tabs()
     if action == "close" and want in ("", "this", "current", "active"):
         pyautogui.hotkey("ctrl", "w")
         return "Closed this tab."
+    # a vague name means the command was misrouted here — say so instead of
+    # answering "No open tab looks like ."
+    if action in ("switch", "go", "close") and want in VAGUE:
+        return ("Which tab? Give me a word from its name — or ask what tabs "
+                "are open.")
     if not tabs:
         return "I can't see a browser tab strip on the window in front."
     if action == "list":

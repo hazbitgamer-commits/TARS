@@ -4,7 +4,7 @@ see boot.py). NOT a shutdown (that's 'goodbye tars', handled in main.py) —
 this always comes back up on its own.
 
 How it works: this code runs INSIDE the live engine process, so it can't
-just kill itself and then start a new copy — it would die before Jacob's
+just kill itself and then start a new copy — it would die before the owner's
 spoken confirmation ever got played, and nothing would be left alive to
 launch the replacement. Instead it closes the dashboard window immediately,
 then hands off to a small detached helper script (_do_restart.py) that:
@@ -17,7 +17,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-BASE = Path(__file__).resolve().parents[2]  # C:\Users\hazbi\Projects\tars
+BASE = Path(__file__).resolve().parents[2]  # the tars folder, wherever it is
 HELPER = Path(__file__).resolve().parent / "_do_restart.py"
 
 DESCRIPTION = ("Fully restart TARS: close the dashboard window, restart the engine "

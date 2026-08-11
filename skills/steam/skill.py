@@ -1,12 +1,12 @@
 """Steam game hub: knows what's installed, launches games by name through
 Steam itself (steam://rungameid — works even for games with no Start Menu
-shortcut), and knows which game Jacob touched most recently."""
+shortcut), and knows which game the owner touched most recently."""
 import difflib
 import os
 import re
 from pathlib import Path
 
-DESCRIPTION = ("Jacob's Steam games: launch one by name ('launch FC 26', "
+DESCRIPTION = ("the owner's Steam games: launch one by name ('launch FC 26', "
                "'start Arma'), list what's installed ('what games do I "
                "have'), or open the most recent one ('launch my last "
                "game'). NOT for non-Steam apps (that's open_app) and NOT "

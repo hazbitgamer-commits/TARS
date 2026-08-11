@@ -1,7 +1,7 @@
 """Standalone eufy vacuum control for TARS.
 
 Uses the vendored api layer from jeppesens/eufy-clean (eufy_lib/) — logs into
-Jacob's eufy account (EUFY_EMAIL / EUFY_PASSWORD in .env), finds the vacuum,
+the owner's eufy account (EUFY_EMAIL / EUFY_PASSWORD in .env), finds the vacuum,
 and drives it over eufy's MQTT. No Home Assistant required.
 
 The slow HTTP login/discovery is cached; the MQTT link is opened fresh per
@@ -19,7 +19,7 @@ BASE = Path(__file__).parent
 sys.path.insert(0, str(BASE / "eufy_lib"))
 
 UDID_FILE = BASE / "eufy_openudid.txt"
-NICK_FILE = BASE / "vacuum_nickname.txt"  # Jacob named it Basel
+NICK_FILE = BASE / "vacuum_nickname.txt"  # the owner named it Basel
 _login_cache = {"t": 0.0, "dev": None, "creds": None}
 CACHE_TTL = 600  # re-login every 10 minutes at most
 

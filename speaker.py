@@ -1,5 +1,5 @@
 """Who's talking? — voice fingerprints (vosk x-vectors), so TARS knows
-Jacob from Sophie from a mate without anyone toggling guest mode.
+the owner from Sophie from a mate without anyone toggling guest mode.
 
 voices.json holds a few 128-dim vectors per person. enroll() adds one from
 a recorded command; identify() names the speaker of an audio clip. Unknown

@@ -1,15 +1,15 @@
-"""Guarded deletion: finds the folder/files Jacob means, requires his spoken
+"""Guarded deletion: finds the folder/files the owner means, requires his spoken
 'yes' (managed by the brain), and always uses the Recycle Bin — never permanent.
 """
 from pathlib import Path
 
 from send2trash import send2trash
 
-DESCRIPTION = ("Delete files or a folder's contents — ALWAYS requires Jacob's spoken "
+DESCRIPTION = ("Delete files or a folder's contents — ALWAYS requires the owner's spoken "
                "confirmation first, and everything goes to the Recycle Bin. "
                "E.g. 'delete all screenshots in the TARS folder'.")
-ARGS = {"target": "which folder or files to delete, in Jacob's words",
-        "confirmed": "leave empty — the brain sets 'true' only after Jacob says yes"}
+ARGS = {"target": "which folder or files to delete, in the owner's words",
+        "confirmed": "leave empty — the brain sets 'true' only after the owner says yes"}
 
 BASE = Path(__file__).resolve().parents[2]
 ROOTS = [BASE / "workshop"] + [Path.home() / r for r in

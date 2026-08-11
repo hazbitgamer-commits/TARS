@@ -1,4 +1,4 @@
-"""Open YouTube in the default web browser, and search it if Jacob gave a topic."""
+"""Open YouTube in the default web browser, and search it if the owner gave a topic."""
 import urllib.parse
 import webbrowser
 

@@ -18,7 +18,7 @@ ARGS = {"action": "'announce', 'volume', 'pause', 'resume', 'stop', or 'list'",
         "room": "'kitchen', 'bedroom', or 'all' (announce defaults to all)",
         "text": "the message, for announce",
         "level": "0-100, for volume",
-        "override": "'true' ONLY if Jacob explicitly says to override quiet hours"}
+        "override": "'true' ONLY if the owner explicitly says to override quiet hours"}
 
 BASE = Path(__file__).resolve().parents[2]
 CACHE = BASE / "speakers_cache.json"
@@ -69,7 +69,7 @@ def run(args: dict) -> str:
             return "I can't find any speakers on the network right now."
         return "On the network: " + "; ".join(f"{d['name']} ({d['model']})" for d in devs) + "."
 
-    # quiet hours: noise-making actions are blocked unless Jacob overrides
+    # quiet hours: noise-making actions are blocked unless the owner overrides
     if action in ("announce", "resume"):
         import sys
 

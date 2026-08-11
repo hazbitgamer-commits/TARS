@@ -1,12 +1,12 @@
-"""Kipp — TARS's self-improvement agent (Jacob's "always getting smarter" rule,
+"""Kipp — TARS's self-improvement agent (the owner's "always getting smarter" rule,
 2026-07-19). Whenever TARS is idle, Kipp re-reads the recent conversation
-transcripts looking for FRICTION — misroutes, misfires, mishearings, Jacob
+transcripts looking for FRICTION — misroutes, misfires, mishearings, the owner
 repeating himself, "I can't do that" moments — turns the worst one into an
 upgrade proposal (local model, free), has a critic score it, and hands the
 good ones to the Claude big brain to actually implement, fully automatically.
 
 Hard safety, in code not prompts:
-  - Implementation runs are throttled (IMPLEMENT_GAP + DAILY_CAP) so Jacob's
+  - Implementation runs are throttled (IMPLEMENT_GAP + DAILY_CAP) so the owner's
     shared Claude allowance survives; reflection itself is local and free.
   - Every core-file change is preceded by a backup (rule in the task prompt)
     AND main.py snapshots a known-good copy of every root .py to
@@ -40,10 +40,10 @@ IMPLEMENT_GAP = 30 * 60      # at most one big-brain upgrade per half hour
 DAILY_CAP = 12               # and at most a dozen a day — Claude allowance
 INTROSPECT_GAP = 6 * 3600    # the scientist session: every ~6 idle hours
 
-# Jacob's "scientist" battery (2026-07-22): Kipp interrogates himself with
+# the owner's "scientist" battery (2026-07-22): Kipp interrogates himself with
 # these during introspection, against REAL mined evidence — never vibes.
 QUESTIONS = (
-    "What task did Jacob repeat that should become one command?",
+    "What task did the owner repeat that should become one command?",
     "What did he repeatedly search or ask for?",
     "Where did he correct me or rephrase because I got it wrong?",
     "What work do I keep making him do manually?",
@@ -142,21 +142,21 @@ def _signals(lines: list[dict]) -> list[dict]:
                                   "skill probably already covers it, or the router "
                                   "needs an example for it."})
 
-    # 2. a skill crashed in Jacob's face
+    # 2. a skill crashed in the owner's face
     for e in said:
         if "That skill misfired" in e.get("text", ""):
             found.append({"kind": "misfire", "evidence": [e["text"]],
                           "hint": "A skill raised an exception during a real "
                                   "command. Find and fix the root cause."})
 
-    # 3. Jacob had to repeat himself (same-ish command twice inside 3 min)
+    # 3. the owner had to repeat himself (same-ish command twice inside 3 min)
     for a, b in zip(heard, heard[1:]):
         if (0 < _parse_t(b) - _parse_t(a) < 180
                 and difflib.SequenceMatcher(
                     None, a["text"].lower(), b["text"].lower()).ratio() > 0.75
                 and len(a["text"]) > 15):
             found.append({"kind": "repeat", "evidence": [a["text"], b["text"]],
-                          "hint": "Jacob repeated almost the same command within "
+                          "hint": "the owner repeated almost the same command within "
                                   "minutes — the first attempt didn't do what he "
                                   "wanted. Work out why from the replies around it."})
 
@@ -166,9 +166,32 @@ def _signals(lines: list[dict]) -> list[dict]:
         if ("I can't" in text or "I don't have a skill" in text) \
                 and "Want me to teach myself" not in text:
             found.append({"kind": "gap", "evidence": [text],
-                          "hint": "TARS told Jacob he couldn't do something. If a "
+                          "hint": "TARS told the owner he couldn't do something. If a "
                                   "small fix or new capability would close the gap "
                                   "safely, that's an upgrade."})
+
+    # 4b. the owner said "that was wrong" — the strongest signal there is,
+    #     because he also told us what it SHOULD have done. Beats every
+    #     inference in this file: no guessing what went wrong.
+    try:
+        rows = json.loads((BASE / "misfires.json").read_text(
+            encoding="utf-8")).get("misfires", [])
+    except (OSError, json.JSONDecodeError):
+        rows = []
+    for row in rows[-12:]:
+        if not row.get("wanted"):
+            continue  # unfinished correction — no target to build towards
+        found.append({
+            "kind": "correction",
+            "evidence": [f"the owner said: {row.get('said', '')}",
+                         f"TARS ran: {row.get('skill', '?')} "
+                         f"{json.dumps(row.get('args', {}))[:120]}",
+                         f"TARS replied: {row.get('reply', '')[:120]}",
+                         f"the owner wanted: {row['wanted']}"],
+            "hint": "the owner explicitly corrected this. Add a DETERMINISTIC gate "
+                    "in brain._handle_routed (or fix the skill) so this exact "
+                    "phrasing does the right thing — he prefers hard code gates "
+                    "over prompt tweaks. Test the old and new phrasings both."})
 
     # 5. frequent mishearing days deserve STT prompt/gate tuning
     misheard = [e for e in said if "I think I misheard" in e.get("text", "")]
@@ -230,7 +253,7 @@ def _reflect() -> None:
         score_raw = _ollama(
             "You are a strict critic inside TARS the voice assistant. Score "
             "this self-upgrade proposal 1-10 for how much it would actually "
-            "improve Jacob's daily experience (10 = clear real win, 1 = "
+            "improve the owner's daily experience (10 = clear real win, 1 = "
             "noise). Reply with ONLY the number.\n"
             f"Proposal: {title} — {fix}\nEvidence:\n{evidence}")
         digits = "".join(c for c in score_raw if c.isdigit())
@@ -255,7 +278,7 @@ def _reflect() -> None:
         pass
 
 
-# ---------------- Jacob's overnight work queue ----------------
+# ---------------- the owner's overnight work queue ----------------
 QUEUE_FILE = BASE / "work_queue.json"
 NIGHT_HOURS = (22, 7)  # queue drains between 10pm and 7am
 
@@ -281,7 +304,7 @@ def queue_add(task: str) -> int:
 
 
 def _drain_queue() -> None:
-    """One queued job per implement-slot, overnight only — Jacob hands TARS
+    """One queued job per implement-slot, overnight only — the owner hands TARS
     a list before bed and hears the results in the morning."""
     global _busy
     hour = datetime.datetime.now().hour
@@ -364,7 +387,7 @@ def _week_lines() -> list[dict]:
 
 def _evidence() -> list[str]:
     """Deterministic pattern mining over the last week — real counts only,
-    so the model can't invent habits Jacob doesn't have."""
+    so the model can't invent habits the owner doesn't have."""
     lines = _week_lines()
     heard = [e.get("text", "") for e in lines if e.get("kind") == "heard"]
     said = [e.get("text", "") for e in lines if e.get("kind") == "said"]
@@ -384,20 +407,20 @@ def _evidence() -> list[str]:
             clusters.append([key])
     for c in sorted(clusters, key=len, reverse=True)[:5]:
         if len(c) >= 4:
-            facts.append(f"Jacob said nearly the same thing {len(c)} times "
+            facts.append(f"the owner said nearly the same thing {len(c)} times "
                          f"this week: \"{c[0][:80]}\"")
 
     # corrections right after TARS spoke → wrongness hotspots
     fixes = [h for h in heard if h.lower().startswith(
         ("no,", "no ", "not that", "i meant", "wrong", "that's not"))]
     if len(fixes) >= 3:
-        facts.append(f"Jacob corrected or redirected me {len(fixes)} times, "
+        facts.append(f"the owner corrected or redirected me {len(fixes)} times, "
                      f"e.g. \"{fixes[-1][:70]}\"")
 
     # capability gaps
     cant = [s for s in said if "I can't" in s or "don't have a skill" in s]
     if cant:
-        facts.append(f"I told Jacob 'I can't' {len(cant)} times this week, "
+        facts.append(f"I told the owner 'I can't' {len(cant)} times this week, "
                      f"most recently: \"{cant[-1][:80]}\"")
 
     # unused skills → spring-cleaning candidates, named so Kipp can act
@@ -411,7 +434,7 @@ def _evidence() -> list[str]:
 
 
 def _library_scout(facts: list[str]) -> str:
-    """Jacob's rule — reuse before rebuild: for capability gaps, look for a
+    """the owner's rule — reuse before rebuild: for capability gaps, look for a
     real open-source tool and put THAT in front of him."""
     gap = next((f for f in facts if "I can't" in f), "")
     if not gap:
@@ -441,7 +464,7 @@ def get_proposals() -> list[dict]:
 
 
 def decide(title: str, build: bool) -> bool:
-    """Jacob clicked BUILD or IGNORE on a proposal card."""
+    """the owner clicked BUILD or IGNORE on a proposal card."""
     s = _state()
     proposals = s.get("proposals", [])
     hit = next((p for p in proposals if p.get("title") == title), None)
@@ -450,15 +473,15 @@ def decide(title: str, build: bool) -> bool:
     if not build:
         hit["status"] = "ignored"
         _save(s)
-        _log(f"PROPOSAL IGNORED by Jacob: {title}")
+        _log(f"PROPOSAL IGNORED by the owner: {title}")
         return True
     hit["status"] = "building"
     s["pending"] = [{"title": hit["title"], "fix": hit.get("build", ""),
                      "score": 99, "evidence": [hit.get("why", "")],
                      "kind": "introspection"}] + s.get("pending", [])
-    s["last_implement"] = 0  # Jacob's click outranks the throttle
+    s["last_implement"] = 0  # the owner's click outranks the throttle
     _save(s)
-    _log(f"PROPOSAL APPROVED by Jacob: {title}")
+    _log(f"PROPOSAL APPROVED by the owner: {title}")
     _implement()
     return True
 
@@ -466,7 +489,7 @@ def decide(title: str, build: bool) -> bool:
 def _introspect() -> None:
     """The scientist session: mine a week of evidence, put the question
     battery to the local model, surface up to 2 capability PROPOSALS as
-    dashboard cards with Build/Ignore buttons — Jacob decides by click."""
+    dashboard cards with Build/Ignore buttons — the owner decides by click."""
     facts = _evidence()
     if not facts:
         return
@@ -479,7 +502,7 @@ def _introspect() -> None:
     try:
         raw = _ollama(
             "You are Kipp, the self-improvement scientist inside TARS, a "
-            "voice assistant on Jacob's PC. EVIDENCE mined from this week "
+            "voice assistant on the owner's PC. EVIDENCE mined from this week "
             "(real, counted — trust it):\n"
             + "\n".join(f"- {f}" for f in facts)
             + "\n\nInterrogate the evidence with these questions:\n"
@@ -525,11 +548,85 @@ def _introspect() -> None:
 # ---------------- big-brain implementation (throttled) ----------------
 FORBIDDEN = (
     "vault/, vault_quarantine/, faces/, notes/, logs/ (their CONTENTS are "
-    "Jacob's personal life — never read or copy them), .env, "
+    "the owner's personal life — never read or copy them), .env, "
     "google_credentials.json, google_token.json, any *token*/*credential* "
     "file, eufy_openudid.txt, boot.py, TARS.bat, runtime/, models/, "
     "wakeword/, backups/"
 )
+
+
+PROOF = BASE / "workshop" / "kipp_proof.py"
+
+
+def _editable_files() -> list[Path]:
+    """Everything Kipp is allowed to change — the rollback set."""
+    files = [p for p in BASE.glob("*.py")]
+    files += list((BASE / "skills").glob("*/skill.py"))
+    files += [p for p in (BASE / "dashboard").glob("*.html")]
+    return files
+
+
+def _snapshot_tree() -> dict:
+    """Contents before Kipp touches anything. Own snapshot deliberately —
+    the rollback must not depend on Kipp having obeyed the rule about
+    copying originals into backups/auto."""
+    out = {}
+    for path in _editable_files():
+        try:
+            out[str(path)] = path.read_bytes()
+        except OSError:
+            pass
+    return out
+
+
+def _restore_tree(before: dict) -> list[str]:
+    """Put back everything that changed. Returns the names restored."""
+    undone = []
+    for path_text, blob in before.items():
+        path = Path(path_text)
+        try:
+            if path.exists() and path.read_bytes() == blob:
+                continue
+            path.write_bytes(blob)
+            undone.append(path.name)
+        except OSError:
+            pass
+    # a file Kipp CREATED isn't in the snapshot; leave new skills alone but
+    # note them, since a half-built skill that never proved itself shouldn't
+    # be silently kept either
+    return undone
+
+
+def _verify_proof(started: float) -> tuple[bool, str]:
+    """Run Kipp's own proof script. No proof, no DONE."""
+    import subprocess
+    import sys
+
+    if not PROOF.exists():
+        return False, "no proof script was written"
+    try:
+        if PROOF.stat().st_mtime < started:
+            return False, "the proof script is left over from an earlier job"
+    except OSError:
+        return False, "the proof script vanished"
+    python = BASE / "runtime" / "python.exe"
+    if not python.exists():  # Lite/Mac has no bundled runtime
+        python = Path(sys.executable)
+    try:
+        run = subprocess.run([str(python), "-s", str(PROOF)], cwd=str(BASE),
+                             capture_output=True, text=True, timeout=180)
+    except subprocess.TimeoutExpired:
+        return False, "the proof ran over two minutes and was stopped"
+    except OSError as e:
+        return False, f"the proof wouldn't start ({e})"
+    output = (run.stdout or "") + (run.stderr or "")
+    if run.returncode != 0:
+        tail = output.strip().splitlines()[-1:] or [""]
+        return False, f"the proof failed: {tail[0][:160]}"
+    for line in output.splitlines():
+        if line.strip().startswith("PROOF OK"):
+            return True, line.strip()[9:].strip(" :")[:200]
+    return False, "the proof ran but never printed PROOF OK"
 
 
 def _implement_worker(item: dict) -> None:
@@ -540,6 +637,8 @@ def _implement_worker(item: dict) -> None:
     sys.path.insert(0, str(BASE))
     import announce
 
+    started = time.time()
+    before = _snapshot_tree()  # taken BEFORE anything, so a revert is total
     try:
         from dotenv import load_dotenv
 
@@ -554,13 +653,16 @@ def _implement_worker(item: dict) -> None:
         os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = token
 
         import anyio
+        import quiet_spawn
         from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
+
+        quiet_spawn.hide()  # no black console window over the owner's desktop
 
         evidence = "\n".join(f"  {e}" for e in item.get("evidence", []))
         prompt = (
             "You are Kipp, TARS's self-improvement engineer, upgrading TARS's "
-            f"own code at {BASE} on Jacob's Windows PC. TARS is a running "
-            "voice assistant; Jacob is non-technical.\n\n"
+            f"own code at {BASE} on the owner's Windows PC. TARS is a running "
+            "voice assistant; the owner is non-technical.\n\n"
             f"UPGRADE TO IMPLEMENT: {item['title']}\n{item['fix']}\n"
             f"Transcript evidence this grew from:\n{evidence}\n\n"
             "HARD RULES, no exceptions:\n"
@@ -570,7 +672,7 @@ def _implement_worker(item: dict) -> None:
             "search(query)); a thin wrapper around a maintained library "
             "beats a bespoke engine.\n"
             "- NEVER add spoken acknowledgments, confirmations, or any "
-            "sound before TARS's actual reply — Jacob has explicitly and "
+            "sound before TARS's actual reply — the owner has explicitly and "
             "repeatedly banned pre-speech noises. You added them once "
             "('confirmation step') and it had to be hunted down and "
             "removed.\n"
@@ -585,8 +687,32 @@ def _implement_worker(item: dict) -> None:
             f"({BASE / 'runtime' / 'python.exe'} -m py_compile <file>) and "
             "import-test it. A broken TARS is the worst possible outcome.\n"
             "- TARS hot-loads skills/, but changes to root .py files only "
-            "apply after Jacob restarts TARS — mention that in SPOKEN if "
+            "apply after the owner restarts TARS — mention that in SPOKEN if "
             "you touched core files.\n\n"
+            "PROOF IS MANDATORY — an upgrade you haven't watched work is not "
+            "finished. You once announced 'your afternoon reminder pulls real "
+            "SEQTA due dates now' when that code could never run: it sat "
+            "below an unguarded read of a file that doesn't exist until "
+            "the owner types something in, and the function's except-block "
+            "swallowed the error. It compiled. It read correctly. It had "
+            "never once fired.\n"
+            f"So: write {PROOF} — a script that RUNS the new behaviour for "
+            "real (import the module, call the function, check what comes "
+            "back) and prints a line starting 'PROOF OK: ' with the actual "
+            "output as evidence. Requirements:\n"
+            "  - It must exercise the CHANGED code path, not just import it.\n"
+            "  - It must pass with optional state files ABSENT as well as "
+            "present — most of TARS's json files only appear once the owner has "
+            "used that feature. Test the empty case explicitly.\n"
+            "  - No network, no microphone, no GUI, under two minutes.\n"
+            "  - It must leave the owner's real data exactly as it found it: "
+            "work on copies or restore what you touch.\n"
+            "  - Print 'PROOF FAILED: <why>' and exit 1 if the behaviour is "
+            "wrong. A proof that cannot fail proves nothing.\n"
+            "TARS runs your proof itself afterwards. If it doesn't exist, "
+            "doesn't print PROOF OK, or exits non-zero, your whole change is "
+            "REVERTED and the owner is told it couldn't be verified — so make it "
+            "honest rather than easy.\n\n"
             "End your final message with a line starting exactly 'SPOKEN: ' — "
             "one short friendly sentence describing the upgrade for "
             "text-to-speech."
@@ -613,10 +739,32 @@ def _implement_worker(item: dict) -> None:
             if line.strip().startswith("SPOKEN:"):
                 spoken = line.strip()[7:].strip()
                 break
-        _log(f"DONE: {item['title']} — {spoken or 'no summary'}")
         with open(BASE / "logs" / "deep_tasks.log", "a", encoding="utf-8") as f:
             stamp = datetime.datetime.now().isoformat(timespec="seconds")
             f.write(f"\n=== {stamp} :: KIPP UPGRADE: {item['title']}\n{result}\n")
+
+        # THE GATE. the owner: "can u make kipp actually test his stuff before
+        # saying its done". A claim is not evidence — the proof has to run.
+        changed = [Path(p).name for p, blob in before.items()
+                   if Path(p).exists() and Path(p).read_bytes() != blob]
+        if not changed:
+            _log(f"NO CHANGE: {item['title']} — Kipp decided against it")
+            if spoken:
+                announce.post(f"Kipp here — {spoken}", hold_during_quiet=True)
+            return
+        proved, detail = _verify_proof(started)
+        if not proved:
+            undone = _restore_tree(before)
+            _log(f"UNVERIFIED (reverted {len(undone)}): {item['title']} — "
+                 f"{detail}")
+            announce.post(
+                f"Kipp here — I tried {item['title'].lower()}, but I "
+                f"couldn't prove it actually worked, so I've put everything "
+                f"back the way it was. Nothing's changed.",
+                hold_during_quiet=True)
+            return
+        _log(f"DONE (verified): {item['title']} — {spoken or 'no summary'} "
+             f"[proof: {detail}] [files: {', '.join(changed)}]")
         if spoken:
             announce.post(f"Kipp here — {spoken}", hold_during_quiet=True)
         try:
@@ -684,7 +832,7 @@ def tick() -> None:
             threading.Thread(target=_introspect, daemon=True).start()
         if now - s.get("last_implement", 0) >= IMPLEMENT_GAP:
             _implement()
-        _drain_queue()  # overnight jobs Jacob left for him
+        _drain_queue()  # overnight jobs the owner left for him
     except Exception:
         pass  # self-improvement must never take down the voice loop
 

@@ -1,7 +1,7 @@
 """Proactive check-ins: TARS speaks up UNPROMPTED — but only on hard
 rules, never on a whim. v1 rules:
   - a calendar event starts within 15 minutes (announced once per event)
-  - suppressed entirely during quiet hours and while Jacob is mid-game
+  - suppressed entirely during quiet hours and while the owner is mid-game
     (game_watch sets the flag) — being useful never means being annoying.
 Ticked ~1/sec from main's standby loop; real checks every 5 minutes."""
 import datetime
@@ -36,6 +36,69 @@ def _gaming() -> bool:
         return False
 
 
+def _school() -> None:
+    """One nudge, late afternoon, about school work due tomorrow — what
+    the owner's told me himself AND, if SEQTA's connected, real assessments the
+    school portal knows about (so he doesn't have to type those in for a
+    reminder to happen). Homework is only useful to hear about while
+    there's still an evening left."""
+    try:
+        import announce
+
+        now = datetime.datetime.now()
+        if now.hour < 16 or now.hour >= 21:
+            return
+        s = _state()
+        today = now.date().isoformat()
+        if s.get("school_nudge") == today:
+            return
+        # school.json only exists once the owner has typed something in himself.
+        # Reading it unguarded threw straight past the SEQTA block below, so
+        # the SEQTA half of this reminder had never once fired.
+        try:
+            data = json.loads((BASE / "school.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = {"work": []}
+        tomorrow = (now.date() + datetime.timedelta(days=1)).isoformat()
+        due = [(w["what"], w.get("due", "")) for w in data.get("work", [])
+               if not w.get("done") and w.get("due", "") <= tomorrow]
+        try:
+            import seqta
+
+            if seqta.configured():
+                marked_done = {w["what"].lower() for w in data.get("work", [])
+                               if w.get("done")}
+                for item in seqta.cached().get("due", []):
+                    # a reminder must not wait on a school-portal login
+                    if item.get("due", "") > tomorrow:
+                        continue
+                    if item.get("what", "").lower() in marked_done:
+                        continue  # he's already told me it's finished
+                    label = (f"{item['what']} for {item['subject']}"
+                             if item.get("subject") else item["what"])
+                    if label not in [d[0] for d in due]:
+                        due.append((label, item.get("due", "")))
+        except Exception:
+            pass  # SEQTA being down must never break the nudge
+        s["school_nudge"] = today
+        _save(s)
+        # something 6 days late is not "due by tomorrow" — say which is which
+        soon = [label for label, when in due if when >= today]
+        late = [label for label, when in due if when < today]
+        line = ""
+        if soon:
+            line = f"Reminder — {', '.join(soon[:3])} due by tomorrow."
+            if late:
+                line += f" {len(late)} still overdue as well."
+        elif late:
+            line = (f"Reminder — {late[0]} is overdue"
+                    + (f", and {len(late) - 1} more." if len(late) > 1 else "."))
+        if line:
+            announce.post(line)
+    except Exception:
+        pass
+
+
 def _check() -> None:
     try:
         import announce
@@ -43,6 +106,7 @@ def _check() -> None:
 
         if quiet.is_active()[0] or _gaming():
             return
+        _school()
         from google_auth import get_service
 
         service = get_service("calendar", "v3")

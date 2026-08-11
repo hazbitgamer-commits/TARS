@@ -1,5 +1,5 @@
 """Open TARS's OWN pages (dashboard, brain, camera) as chromeless app
-windows — part of the TARS app, not tabs in Jacob's browser. External
+windows — part of the TARS app, not tabs in the owner's browser. External
 websites still open in the normal browser; this is only for 127.0.0.1:8765."""
 import os
 import subprocess

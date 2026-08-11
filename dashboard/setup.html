@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TARS — setup</title>
+<style>
+:root{--bg:#04060c;--panel:rgba(13,20,33,.66);--edge:rgba(90,140,200,.16);
+  --cyan:#46d4ff;--txt:#d7e3f0;--dim:#5d7288;--faint:#33445a;--green:#3ddc97}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--txt);min-height:100vh;padding:34px 20px;
+  font:15px/1.6 "Segoe UI Variable Display","Segoe UI",system-ui,sans-serif}
+.wrap{max-width:620px;margin:0 auto}
+h1{font-size:26px;font-weight:200;letter-spacing:9px;color:#eaf6ff;margin-bottom:6px}
+.sub{color:var(--dim);font-size:14px;margin-bottom:26px}
+.card{background:var(--panel);border:1px solid var(--edge);border-radius:16px;
+  padding:20px 22px;margin-bottom:14px}
+.card h2{font-size:10px;letter-spacing:4px;color:var(--dim);text-transform:uppercase;
+  margin-bottom:14px;font-weight:600}
+label{display:block;margin-bottom:14px}
+label:last-child{margin-bottom:0}
+.q{font-size:14.5px;margin-bottom:3px}
+.hint{font-size:12.5px;color:var(--dim);margin-bottom:6px}
+input,select{width:100%;background:rgba(5,9,16,.65);border:1px solid var(--edge);
+  border-radius:10px;color:var(--txt);font:inherit;font-size:14px;padding:10px 12px;
+  outline:none}
+input:focus,select:focus{border-color:var(--cyan);box-shadow:0 0 0 3px rgba(70,212,255,.12)}
+.row{display:flex;gap:8px;align-items:center}
+.row input{flex:1}
+button{background:rgba(70,212,255,.12);border:1px solid rgba(70,212,255,.35);
+  color:var(--cyan);font:inherit;font-size:13px;border-radius:10px;padding:10px 16px;
+  cursor:pointer;white-space:nowrap}
+button:hover{background:rgba(70,212,255,.2)}
+button.ghost{background:none;border-color:var(--edge);color:var(--dim)}
+#save{width:100%;padding:14px;font-size:15px;letter-spacing:2px;text-transform:uppercase;
+  margin-top:6px}
+.note{font-size:12.5px;color:var(--faint);margin-top:12px;line-height:1.55}
+.ok{color:var(--green)}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>TARS</h1>
+  <div class="sub" id="lede">First run — tell me about you. Everything here stays on this computer.</div>
+
+  <div class="card">
+    <h2>You</h2>
+    <label><div class="q">What should I call you?</div>
+      <input id="name" placeholder="First name is fine" autocomplete="off"></label>
+    <label><div class="q">Which town or city?</div>
+      <div class="hint">For weather and sunset times</div>
+      <input id="city" placeholder="e.g. Perth" autocomplete="off"></label>
+  </div>
+
+  <div class="card">
+    <h2>School</h2>
+    <label><div class="q">Does your school use SEQTA?</div>
+      <select id="school_portal">
+        <option>No school</option><option>SEQTA</option><option>Something else</option>
+      </select></label>
+    <div id="portalBits" class="hidden">
+      <label><div class="q">The address you log into</div>
+        <div class="hint">e.g. learn.yourschool.wa.edu.au</div>
+        <input id="seqta_url" placeholder="learn.yourschool.wa.edu.au" autocomplete="off"></label>
+      <label><div class="q">Username</div>
+        <input id="seqta_user" autocomplete="off"></label>
+      <label><div class="q">Password</div>
+        <div class="hint">Stays on this computer. Only ever sent to your school's own site.</div>
+        <div class="row"><input id="seqta_pass" type="password" autocomplete="new-password">
+          <button type="button" class="ghost" id="peek">Show</button></div></label>
+      <button type="button" id="testBtn">Test the connection</button>
+      <div class="note" id="testOut"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Extras — skip any of these</h2>
+    <label><div class="q">Telegram bot token</div>
+      <div class="hint">Lets you text TARS from your phone. Get one free from @BotFather.</div>
+      <input id="telegram_token" type="password" autocomplete="new-password"></label>
+    <label><div class="q">Big jobs — self-teaching and building things</div>
+      <div class="hint">Paid, on your own account. Everyday talking is always free and local.</div>
+      <select id="big_brain"><option>Off</option><option>Claude</option><option>ChatGPT</option></select></label>
+    <label id="keyBox" class="hidden"><div class="q">Your key for that</div>
+      <div class="hint" id="keyHint"></div>
+      <input id="big_brain_key" type="password" autocomplete="new-password"></label>
+  </div>
+
+  <button id="save">Save and start</button>
+  <div class="note" id="saved"></div>
+  <div class="note">Nothing here is uploaded anywhere. It's written to a file on this
+    computer and included in your own backups, so an update never wipes it.</div>
+</div>
+
+<script>
+const F = ["name","city","school_portal","seqta_url","seqta_user","seqta_pass",
+           "telegram_token","big_brain","big_brain_key"];
+const el = id => document.getElementById(id);
+
+function toggles(){
+  el("portalBits").classList.toggle("hidden", el("school_portal").value === "No school");
+  const brain = el("big_brain").value;
+  el("keyBox").classList.toggle("hidden", brain === "Off");
+  el("keyHint").textContent = brain === "ChatGPT"
+    ? "An OpenAI API key — starts with sk-"
+    : "A Claude Code OAuth token";
+}
+el("school_portal").addEventListener("change", toggles);
+el("big_brain").addEventListener("change", toggles);
+
+el("peek").addEventListener("click", async () => {
+  const box = el("seqta_pass");
+  if(box.type === "password"){
+    const r = await fetch("/api/setup/reveal", {method:"POST"});
+    const s = await r.json();
+    if(s.seqta_pass) box.value = s.seqta_pass;
+    box.type = "text"; el("peek").textContent = "Hide";
+  } else { box.type = "password"; el("peek").textContent = "Show"; }
+});
+
+el("testBtn").addEventListener("click", async () => {
+  el("testOut").textContent = "Trying…";
+  const body = {}; F.forEach(k => body[k] = el(k).value);
+  const r = await fetch("/api/setup/test", {method:"POST",
+    headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+  const s = await r.json();
+  el("testOut").textContent = s.message || "No answer.";
+  el("testOut").className = "note" + (s.ok ? " ok" : "");
+});
+
+el("save").addEventListener("click", async () => {
+  const body = {}; F.forEach(k => body[k] = el(k).value);
+  el("save").textContent = "Saving…";
+  const r = await fetch("/api/setup", {method:"POST",
+    headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+  const s = await r.json();
+  el("save").textContent = "Save and start";
+  el("saved").textContent = s.ok
+    ? "Saved. " + (s.name ? "Nice to meet you, " + s.name + "." : "") +
+      " You can close this — say “hey TARS” whenever."
+    : "That didn't save.";
+  el("saved").className = "note ok";
+});
+
+(async () => {
+  const r = await fetch("/api/setup");
+  const s = await r.json();
+  F.forEach(k => { if(s.values[k] !== undefined) el(k).value = s.values[k]; });
+  if(!s.first_run){
+    el("lede").textContent = "Your details. Change anything and save — " +
+      "click Show to read a password back.";
+  }
+  toggles();
+})();
+</script>
+</body>
+</html>

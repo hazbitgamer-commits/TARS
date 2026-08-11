@@ -12,7 +12,7 @@ VOICE = "en-GB-RyanNeural"  # dry British male
 RATE = "+8%"
 SMOOTH = False  # True: strip pause-punctuation so speech flows with fewer stops
 
-# Jacob can change VOICE/RATE live via the voice_settings skill; whatever it
+# the owner can change VOICE/RATE live via the voice_settings skill; whatever it
 # last saved here is re-applied on startup.
 _SETTINGS_FILE = Path(__file__).parent / "voice_settings.json"
 
@@ -118,9 +118,9 @@ async def _fetch_mp3(text: str) -> bytes:
     return buf.getvalue()
 
 
-# EMPTY BY JACOB'S ORDER: no pre-speech acknowledgment clips, ever.
+# EMPTY BY THE OWNER'S ORDER: no pre-speech acknowledgment clips, ever.
 # (History: non-words removed for Kokoro mangling, then real words removed
-# at Jacob's request, then KIPP re-enabled them 2026-07-22 — caught by
+# at the owner's request, then KIPP re-enabled them 2026-07-22 — caught by
 # wiretap 2026-08-08. The machinery stays dormant; do not repopulate.)
 ACKS = ()
 
@@ -133,18 +133,20 @@ class Speaker:
         self._ack_cache: dict[str, tuple] = {}
         import threading
 
-        self._stop = threading.Event()  # set = Jacob said "stop", shut up
+        self._stop = threading.Event()  # set = the owner said "stop", shut up
+        # ...or held his palm up: gestures.py needs the same off switch the
+        # voice "stop" uses, without knowing how speech playback works
         threading.Thread(target=self._preload_acks, daemon=True).start()
 
     @staticmethod
     def _night(audio):
-        """Delivery gain: softer at night, a touch livelier when Jacob's
+        """Delivery gain: softer at night, a touch livelier when the owner's
         excited, gentler when he's annoyed."""
         return audio * MOOD_GAIN[_mood_now()]
 
     def _play(self, audio, sr) -> bool:
         """Play, interruptibly: polls the stop flag while audio runs.
-        Returns False if Jacob cut it off."""
+        Returns False if the owner cut it off."""
         import time as _t
 
         device = None
@@ -249,7 +251,7 @@ class Speaker:
         def producer():
             for s in sentences:
                 if self._stop.is_set():
-                    break  # Jacob cut it off — stop synthesizing too
+                    break  # the owner cut it off — stop synthesizing too
                 if not s:
                     continue
                 res = _synth(s)
@@ -290,7 +292,7 @@ class Speaker:
                 spoken.append(s)
                 if audio is not None:
                     if not self._play(audio, sr):
-                        break  # Jacob said stop — drop the rest
+                        break  # the owner said stop — drop the rest
                 else:
                     self._say_offline(s)
             while not q.empty():  # unblock the producer
@@ -302,6 +304,11 @@ class Speaker:
             disarm()
             duck.restore()
         return " ".join(spoken)
+
+    def shut_up(self) -> None:
+        """Cut the current reply off mid-word. Same switch the spoken
+        "stop" flips — used by the palm-up hand signal."""
+        self._stop.set()
 
     def say(self, text: str) -> None:
         if not text:

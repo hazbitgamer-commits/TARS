@@ -1,6 +1,6 @@
 # clipboard
 
-Copies given text directly onto Jacob's Windows clipboard (using `pyperclip`), so he can paste
+Copies given text directly onto the owner's Windows clipboard (using `pyperclip`), so he can paste
 it into any app afterwards. Can also read back whatever is currently sitting on the clipboard.
 
 ## Examples

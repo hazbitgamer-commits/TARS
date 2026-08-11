@@ -125,8 +125,8 @@ def _match(vec: np.ndarray, db: dict) -> str | None:
 
 
 def _pick(found: list, which: str):
-    """Choose WHICH face Jacob means. Enrolling always took the biggest
-    face, so 'add Emma, the girl in the background' tagged Jacob himself."""
+    """Choose WHICH face the owner means. Enrolling always took the biggest
+    face, so 'add Emma, the girl in the background' tagged the owner himself."""
     which = (which or "").lower()
     by_size = sorted(found, key=lambda f: -(f["box"][2] * f["box"][3]))
     by_x = sorted(found, key=lambda f: f["box"][0])
@@ -235,7 +235,7 @@ def find_name(spoken: str) -> str | None:
 def forget(name: str) -> str:
     """Remove a learned person from the face database — their embeddings and
     their reference photo. Their vault note in People/ is left alone, since
-    that's Jacob's memory of them, not the recognition data."""
+    that's the owner's memory of them, not the recognition data."""
     db = _db()
     if name not in db:
         return f"I don't have {name} in my face database."

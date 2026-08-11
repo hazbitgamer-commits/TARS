@@ -1,6 +1,6 @@
 import os
 
-DESCRIPTION = ("Open a small popup text box window on screen where Jacob can type "
+DESCRIPTION = ("Open a small popup text box window on screen where the owner can type "
                "or paste text — handy since he can't paste directly into this "
                "terminal chat. Whatever he writes gets saved so TARS can read it "
                "back. E.g. 'open a notes box', 'give me somewhere to paste this', "

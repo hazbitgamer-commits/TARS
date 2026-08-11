@@ -85,7 +85,7 @@ def run(args: dict) -> str:
         r = requests.post(OLLAMA_URL, json={
             "model": MODEL, "stream": False, "keep_alive": "2h",
             "messages": [{"role": "user", "content":
-                f"Text captured from a page on Jacob's screen:\n{text}\n\n"
+                f"Text captured from a page on the owner's screen:\n{text}\n\n"
                 f"{ask} — plain conversational text for text-to-speech, no "
                 "markdown, nothing invented beyond the text."}],
             "options": {"temperature": 0.2}}, timeout=120)

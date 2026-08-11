@@ -77,7 +77,7 @@ def run_scout(speak: bool = True) -> str:
             "model": MODEL, "stream": False, "think": False,
             "messages": [{"role": "user", "content":
                 "You are Scout, TARS's briefing agent. Compress this into a "
-                "morning briefing for Jacob — three or four short spoken "
+                "morning briefing for the owner — three or four short spoken "
                 "sentences, most important first, plain text, no markdown:\n"
                 + raw}],
             "options": {"num_predict": 180}}, timeout=120)
@@ -94,7 +94,7 @@ def run_scout(speak: bool = True) -> str:
         import neuro
 
         fired = neuro.get().stimulate(brief, source="Scout")
-        log_touch("Scout", [x["name"] for x in fired] or ["Jacob basics"])
+        log_touch("Scout", [x["name"] for x in fired] or ["the owner basics"])
     except Exception:
         pass
     _mark("scout_ran")
@@ -143,7 +143,7 @@ def run_librarian() -> str:
 # ---------------- Curator ----------------
 def run_curator(speak: bool = True) -> str:
     """Sort vault_quarantine: a note is genuine only if its content is
-    grounded in what Jacob actually said (full transcript corpus)."""
+    grounded in what the owner actually said (full transcript corpus)."""
     import re
     import shutil
 
@@ -157,7 +157,7 @@ def run_curator(speak: bool = True) -> str:
     corpus = []
     for conv in (BASE / "vault" / "Conversations").glob("*.md"):
         for line in conv.read_text(encoding="utf-8").splitlines():
-            m = re.match(r"- \*\*\d\d:\d\d\*\* Jacob: (.+)", line)
+            m = re.match(r"- \*\*\d\d:\d\d\*\* the owner: (.+)", line)
             if m:
                 corpus.append(m.group(1))
     corpus_low = " ".join(corpus).lower()
@@ -170,7 +170,7 @@ def run_curator(speak: bool = True) -> str:
                  for l in note.read_text(encoding="utf-8").splitlines()
                  if l.strip().startswith("- ")]
         if any(Brain._grounded(f, corpus_low) for f in facts if f):
-            shutil.move(str(note), str(BASE / "vault" / "About Jacob" / note.name))
+            shutil.move(str(note), str(BASE / "vault" / "About the owner" / note.name))
             restored.append(note.stem)
         else:
             shutil.move(str(note), str(rejected_dir / note.name))
@@ -199,7 +199,7 @@ def run_curator(speak: bool = True) -> str:
 def tick() -> None:
     now = datetime.datetime.now()
     s = _state()
-    # Scout's AUTOMATIC morning briefing removed at Jacob's request
+    # Scout's AUTOMATIC morning briefing removed at the owner's request
     # (2026-07-21) — "give me my morning briefing" still works on demand.
 
     # Curator sweeps whenever quarantine has contents, at most once a day

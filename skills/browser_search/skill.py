@@ -3,7 +3,7 @@ import webbrowser
 
 DESCRIPTION = ("Show something in the browser: a web search, a map, or VIDEOS "
                "(highlights, trailers, music, clips — opens YouTube results). Use when "
-               "Jacob wants it ON SCREEN (web_search is for spoken answers). E.g. "
+               "the owner wants it ON SCREEN (web_search is for spoken answers). E.g. "
                "'find FC Magdeburg highlights', 'open a map of England'.")
 ARGS = {"query": "what to look up",
         "kind": "'video' for highlights/clips/trailers/music, 'map' for maps, else 'search'"}

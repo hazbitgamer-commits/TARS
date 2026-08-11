@@ -1,6 +1,6 @@
 """Shared Google sign-in for the email and calendar skills.
 
-Needs google_credentials.json (from Jacob's Google Cloud setup) once; after the
+Needs google_credentials.json (from the owner's Google Cloud setup) once; after the
 first browser approval, google_token.json keeps it signed in.
 
 Avast intercepts TLS on this PC, so we build a CA bundle that includes the
@@ -34,7 +34,7 @@ def _ca_bundle() -> str:
 
 
 def get_service(api: str, version: str):
-    """Google API service, or None if Jacob hasn't connected Google yet."""
+    """Google API service, or None if the owner hasn't connected Google yet."""
     if not CRED.exists():
         return None
     bundle = _ca_bundle()

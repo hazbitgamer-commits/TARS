@@ -1,4 +1,4 @@
-"""Tiny always-on-top status pill so Jacob can see what TARS is doing.
+"""Tiny always-on-top status pill so the owner can see what TARS is doing.
 
 Grey = standby, green = listening, amber = thinking, blue = speaking.
 Drag it anywhere with the mouse. Runs on its own thread.
@@ -61,7 +61,7 @@ class StatusUI:
         canvas.bind("<Button-1>", press)
         canvas.bind("<B1-Motion>", drag)
 
-        # right-click the pill = the always-available off switch (Jacob:
+        # right-click the pill = the always-available off switch (the owner:
         # "i don't know how to close tars")
         menu = tk.Menu(root, tearoff=0, bg="#101418", fg="#e8e8e8",
                        activebackground="#22303f", activeforeground="#ffffff",

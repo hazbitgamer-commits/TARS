@@ -35,7 +35,7 @@ def _extract(lines: list[str], day: str) -> list[dict]:
     r = requests.post(OLLAMA_URL, json={
         "model": MODEL, "stream": False, "think": False, "format": "json",
         "messages": [{"role": "user", "content":
-            f"Part of a conversation between Jacob and his assistant TARS on {day}:\n"
+            f"Part of a conversation between the owner and his assistant TARS on {day}:\n"
             f"{transcript}\n\n"
             f"EXISTING topic notes: {json.dumps(existing)}\n"
             "If the conversation fits an existing topic, use its EXACT title "

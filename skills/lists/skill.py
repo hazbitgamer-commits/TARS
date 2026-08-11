@@ -6,7 +6,7 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parents[2]
 FILE = BASE / "lists.json"
 
-DESCRIPTION = ("Jacob's voice LISTS — shopping list and to-do list. Add "
+DESCRIPTION = ("the owner's voice LISTS — shopping list and to-do list. Add "
                "items ('add milk to the shopping list', 'put mow the lawn "
                "on my to-do list'), read a list ('what's on my shopping "
                "list'), remove items ('take milk off the list'), or clear "

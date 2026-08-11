@@ -14,7 +14,7 @@ ARGS = {"address": "the website name or URL to go to, e.g. 'youtube.com', 'githu
 SITE_WORDS = {" dot co dot uk": ".co.uk", " dot com": ".com", " dot net": ".net",
               " dot org": ".org", " dot io": ".io", " dot au": ".au", " dot tv": ".tv"}
 
-# common sites Jacob is likely to say by bare name, mapped to their real address
+# common sites the owner is likely to say by bare name, mapped to their real address
 KNOWN_SITES = {
     "youtube": "youtube.com", "google": "google.com", "github": "github.com",
     "reddit": "reddit.com", "amazon": "amazon.com", "wikipedia": "wikipedia.org",

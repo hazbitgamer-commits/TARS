@@ -27,6 +27,12 @@ from dotenv import load_dotenv
 BASE = Path(__file__).parent
 load_dotenv(BASE / ".env")
 
+import quiet_spawn
+
+# TARS runs windowless (pythonw), so any console child — the Claude CLI
+# most of all — gets handed its own black window on the owner's desktop.
+quiet_spawn.hide()
+
 from brain import Brain      # noqa: E402
 from stt import Transcriber  # noqa: E402
 from tts import Speaker      # noqa: E402
@@ -67,7 +73,7 @@ def vault_conversation_line(day: str, hhmm: str, kind: str, text: str) -> None:
         journal_dir.mkdir(exist_ok=True)
         with open(journal_dir / f"Journal {day}.md", "a", encoding="utf-8") as jf:
             jf.write(f"- Conversation log: [[Conversation {day}]]\n")
-    who = "Jacob" if kind == "heard" else "TARS"
+    who = "the owner" if kind == "heard" else "TARS"
     with open(note, "a", encoding="utf-8") as f:
         f.write(f"- **{hhmm}** {who}: {text}\n")
 
@@ -231,11 +237,22 @@ def main() -> None:
     ensure_single_instance()
     import audio_out
 
-    audio_out.apply_saved()  # voice comes out wherever Jacob last put it
+    audio_out.apply_saved()  # voice comes out wherever the owner last put it
     ui = StatusUI()
     import dashboard
 
     dashboard.start()  # localhost:8765, "show me the home page"
+
+    # FIRST RUN EVER — ask who this is. Never again after that: updating
+    # TARS must not wipe someone's details or re-ask for their password.
+    import profile
+
+    if profile.needs_setup():
+        import tars_window as _win
+        import threading as _th
+
+        print("First run — opening setup so you can introduce yourself.")
+        _th.Timer(2.0, lambda: _win.open_page("setup", 700, 900)).start()
 
     def set_state(s: str) -> None:
         ui.set(s)
@@ -243,10 +260,20 @@ def main() -> None:
     speaker = Speaker()
     transcriber = Transcriber()
     brain = Brain(BASE)
-    dashboard.BRAIN = brain  # the dashboard's "Teach TARS" box needs it
+    dashboard.BRAIN = brain      # the dashboard's Teach + Talk boxes
+    import gestures
+
+    gestures.wire(speaker=speaker, brain=brain)  # palm-up / thumbs signals
+    dashboard.SPEAKER = speaker  # so typed messages can be answered aloud
     import threading
 
     threading.Thread(target=brain.warm, daemon=True).start()
+    # mediapipe costs 4.3s to import — pay it here, in the background, so
+    # "watch for signals" starts in the time it takes to open the camera.
+    # (Must sit AFTER `import threading`: main() binds threading locally, so
+    # touching it earlier in the function is an UnboundLocalError — which is
+    # exactly how I crashed the boot and triggered a 37-file rollback.)
+    threading.Thread(target=gestures.warm, daemon=True).start()
     import tars_phone
 
     tars_phone.start(brain)  # no-op until a Telegram token is in .env
@@ -328,6 +355,12 @@ def main() -> None:
 
                         game_watch.tick()  # session buddy + gaming flag
                         routine_watch.tick()  # routines that fire themselves
+                        import backup
+
+                        backup.tick()  # nightly, quiet unless it matters
+                        import downloads_watch
+
+                        downloads_watch.tick()  # files finished downloads away
                         proactive.tick()   # calendar heads-ups, rules-gated
                         for announcement in timers_watch.pop_due() + announce.pop():
                             print(f"TARS: {announcement}")
@@ -372,7 +405,7 @@ def main() -> None:
                     stream.start()
                 continue
 
-            # --- conversation: keep listening until Jacob goes quiet ---
+            # --- conversation: keep listening until the owner goes quiet ---
             in_conversation = True
             first_turn = True
             convo: list[str] = []
@@ -393,7 +426,7 @@ def main() -> None:
                     break
 
                 # WHO said it — unknown voices get the guest treatment
-                # automatically (no personal facts), Jacob gets himself
+                # automatically (no personal facts), the owner gets himself
                 global LAST_AUDIO, LAST_SPEAKER
                 LAST_AUDIO = audio
                 try:
@@ -441,7 +474,7 @@ def main() -> None:
 
                 print(f"You: {text}")
                 log("heard", text)
-                convo.append(f"Jacob: {text}")
+                convo.append(f"the owner: {text}")
 
                 if any(w in text.lower() for w in ("goodnight", "good night")):
                     # the nightly wrap-up: recap + tomorrow, then sleep
@@ -450,7 +483,7 @@ def main() -> None:
                     try:
                         wrap = brain.skills.run("nightly_wrap", {}) or ""
                     except Exception:
-                        wrap = "Sleep well, Jacob."
+                        wrap = "Sleep well, the owner."
                     log("said", wrap)
                     speaker.say(wrap + " Going quiet now — say, hey TARS, "
                                 "wake up, if you need me.")
@@ -469,7 +502,7 @@ def main() -> None:
                 if any(w in text.lower() for w in SHUTDOWN_WORDS):
                     set_state("speaking")
                     stream.stop()
-                    speaker.say("Powering down. Goodbye, Jacob.")
+                    speaker.say("Powering down. Goodbye, the owner.")
                     log("said", "Powering down.")
                     import os
 
@@ -483,7 +516,7 @@ def main() -> None:
                     stream.start()
                     break
 
-                # if Jacob just said the exact same thing again, don't run it
+                # if the owner just said the exact same thing again, don't run it
                 # twice blind — the repeat almost always means TARS missed it
                 # the first time, not that he wants a second run.
                 norm = text.strip().lower().rstrip(".!? ")
@@ -500,7 +533,7 @@ def main() -> None:
                     continue
                 last_command_norm = norm
 
-                # JACOB'S STANDING ORDER (2026-08-08): NO spoken sounds
+                # THE OWNER'S STANDING ORDER (2026-08-08): NO spoken sounds
                 # before the reply — no "Okay."/"Right."/"On it.", ever.
                 # Kipp re-added an ack here once ("confirmation step",
                 # 2026-07-22) and it took a wiretap to catch. Do not re-add.

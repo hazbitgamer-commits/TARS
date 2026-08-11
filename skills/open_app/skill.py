@@ -22,7 +22,7 @@ ALIASES = {
     "excel": "excel", "spotify": "spotify:", "settings": "ms-settings:",
     "steam": "steam://open/main", "task manager": "taskmgr", "paint": "mspaint",
     "obsidian": "obsidian://", "discord": "discord:",
-    # WEB apps — not installed programs, they live at URLs (Jacob asked for
+    # WEB apps — not installed programs, they live at URLs (the owner asked for
     # "the FC web app" and got "nothing installed by that name")
     "fc web app": "https://www.ea.com/ea-sports-fc/ultimate-team/web-app/",
     "fut web app": "https://www.ea.com/ea-sports-fc/ultimate-team/web-app/",
@@ -31,7 +31,12 @@ ALIASES = {
     "youtube": "https://www.youtube.com", "gmail": "https://mail.google.com",
     "whatsapp web": "https://web.whatsapp.com",
     "github": "https://github.com", "the github": "https://github.com",
-    "my github": "https://github.com/hazbitgamer-commits?tab=repositories",
+    # "my github" is whoever is RUNNING this — set GITHUB_USER in .env.
+    # It was hardcoded to the owner's account, which would have sent every
+    # mate's "open my github" to his profile.
+    "my github": ("https://github.com/"
+                  + (os.getenv("GITHUB_USER", "") or "")
+                  + ("?tab=repositories" if os.getenv("GITHUB_USER") else "")),
     "cadam": "https://adam.new/cadam",  # text-to-CAD in the browser
     "adam cad": "https://adam.new/cadam",
     # whisper's renderings of "CADAM"

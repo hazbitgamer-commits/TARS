@@ -1,10 +1,10 @@
-"""Upload a single file to a dedicated GitHub repo so Jacob can grab it
+"""Upload a single file to a dedicated GitHub repo so the owner can grab it
 from any other computer later, just by telling TARS the file name.
 
 Different from the existing github_upload skill (which pushes a whole
 folder and needs the GitHub repo web address repeated on every single
 call) and github_export (which only copies files locally and never
-uploads anything): this skill is built for Jacob's actual ask -- "tell
+uploads anything): this skill is built for the owner's actual ask -- "tell
 you which file ... and you do it automatically". It keeps one small
 dropbox-style folder (workshop/github_files/) as its own git repo, copies
 just the one named file into it, and pushes. The GitHub repo address only
@@ -16,23 +16,23 @@ Safety (matches TARS's hard rules):
   - Only ever creates/modifies files inside workshop/github_files/ --
     never deletes anything, never touches files outside that folder.
   - Doesn't spend any money -- GitHub pushes are free.
-  - Doesn't send any email or message -- pushing a file to a repo Jacob
+  - Doesn't send any email or message -- pushing a file to a repo the owner
     owns is neither.
   - Auth is handled entirely by git/Windows itself (same as
     github_upload). If this PC isn't already signed in to GitHub, git
-    will pop up a login window for Jacob -- that's expected and not
+    will pop up a login window for the owner -- that's expected and not
     something this skill does on his behalf.
 """
 import shutil
 import subprocess
 from pathlib import Path
 
-DESCRIPTION = ("Upload ONE specific file to GitHub automatically so Jacob "
+DESCRIPTION = ("Upload ONE specific file to GitHub automatically so the owner "
                "can download it later from any other computer, just by "
                "naming the file. E.g. 'upload countdown.py to GitHub', "
                "'send my notes file to GitHub so I can get it on my "
                "laptop'. Remembers the GitHub repo address after the "
-               "first use, so Jacob doesn't have to repeat it every time. "
+               "first use, so the owner doesn't have to repeat it every time. "
                "NOT for pushing a whole project folder (that's the "
                "github_upload skill) and NOT for just making a local copy "
                "without uploading anywhere (that's github_export).")
@@ -42,7 +42,7 @@ ARGS = {
     "note": "optional short note about the file, used as the commit message",
 }
 
-WORKSHOP = Path(r"C:\Users\hazbi\Projects\tars\workshop")
+WORKSHOP = Path(__file__).resolve().parents[2] / "workshop"
 DROPBOX = WORKSHOP / "github_files"
 REPO_URL_FILE = DROPBOX / ".repo_url.txt"
 GIT_TIMEOUT = 25  # seconds -- long enough for a normal push, short enough not to hang forever

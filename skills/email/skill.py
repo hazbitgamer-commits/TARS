@@ -1,5 +1,5 @@
 """Gmail: check/read/summarize mail, and write drafts. TARS never sends —
-drafts wait in Gmail for Jacob to review and hit send himself (hard-block rule).
+drafts wait in Gmail for the owner to review and hit send himself (hard-block rule).
 """
 import base64
 import sys
@@ -12,12 +12,12 @@ BASE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BASE))
 
 DESCRIPTION = ("Gmail: check for new email, read the latest one, summarize the inbox, "
-               "or draft an email (drafts only — Jacob sends them himself from Gmail). "
+               "or draft an email (drafts only — the owner sends them himself from Gmail). "
                "E.g. 'any new emails?', 'what was my latest email', 'summarize my "
                "emails', 'draft an email to mum about sunday dinner'.")
 ARGS = {"action": "'unread', 'latest', 'summarize', or 'draft'",
         "to": "recipient, for draft (name or address)",
-        "about": "what the draft should say, in Jacob's words"}
+        "about": "what the draft should say, in the owner's words"}
 
 NOT_CONNECTED = ("Google isn't connected yet — the setup steps are in the readme, "
                  "or ask Claude to walk you through it.")
@@ -98,7 +98,7 @@ def run(args: dict) -> str:
         r = requests.post(OLLAMA_URL, json={
             "model": MODEL, "stream": False, "think": False,
             "messages": [{"role": "user", "content":
-                "Recent emails in Jacob's inbox:\n" + "\n".join(lines) +
+                "Recent emails in the owner's inbox:\n" + "\n".join(lines) +
                 "\n\nSummarize what matters in two or three short spoken "
                 "sentences. Skip obvious spam/newsletters unless notable. "
                 "Plain text, no markdown."}],
@@ -113,9 +113,9 @@ def run(args: dict) -> str:
         r = requests.post(OLLAMA_URL, json={
             "model": MODEL, "stream": False, "think": False, "format": "json",
             "messages": [{"role": "user", "content":
-                f"Write a short friendly email from Jacob. To: {to or 'unknown'}. "
+                f"Write a short friendly email from the owner. To: {to or 'unknown'}. "
                 f"About: {about}. Reply JSON: "
-                '{"subject": "...", "body": "... (sign off as Jacob)"}'}],
+                '{"subject": "...", "body": "... (sign off as the owner)"}'}],
             "options": {"temperature": 0.4}}, timeout=120)
         import json as _json
 

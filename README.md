@@ -1,4 +1,4 @@
-# TARS — Jacob's voice assistant
+# TARS — a voice assistant that runs on your own machine
 
 ## How to start / stop
 - **Start:** double-click `TARS.bat` in this folder.
@@ -11,7 +11,7 @@
 
 ## Monthly cost
 **$0.** Local brain (Ollama), free Microsoft voice, free wake-word tier,
-and hard tasks go through Jacob's existing Claude subscription (later phase).
+and hard tasks go through your own Claude subscription (optional).
 
 ## What TARS can do right now (Phases 1–3)
 - Wake on **"Hey TARS"** (local Vosk keyword spotting — free, offline, no account)
@@ -64,7 +64,7 @@ and hard tasks go through Jacob's existing Claude subscription (later phase).
 ## One-time setup for big-brain tasks
 1. Open Command Prompt (press Win, type `cmd`, Enter)
 2. Type `claude setup-token` and press Enter — a browser window opens
-3. Approve it (uses Jacob's existing Claude subscription, no extra cost)
+3. Approve it (uses your own Claude subscription)
 4. Copy the token it prints (starts with `sk-ant-`) and give it to Claude
    Code to store in `.env` as `CLAUDE_CODE_OAUTH_TOKEN`
 
@@ -103,7 +103,7 @@ and hard tasks go through Jacob's existing Claude subscription (later phase).
 
 - **Webcam eye** (only when you say "camera"/"webcam"): "access my camera" opens
   the live feed page; "access my camera, what am I holding" describes a snapshot
-- **Face memory:** "the person in the white shirt is Jacob" teaches TARS a
+- **Face memory:** "the person in the white shirt is Sam" teaches TARS a
   face; "who is this?" answers by name; known people get live nametags on the
   camera feed and a person-note in the vault (all local — faces never leave the PC)
 - **Eyes:** "what's on my screen?" / "look at my left screen and read the

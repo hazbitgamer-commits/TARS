@@ -1,4 +1,4 @@
-"""Game session buddy: notices when Jacob is gaming (foreground window
+"""Game session buddy: notices when the owner is gaming (foreground window
 matches an installed Steam game or known game list), tracks the session,
 and after 2 hours offers a gentle hourly nudge. Sets in_session() so
 proactive check-ins keep quiet during matches. Ticked from standby."""
@@ -52,6 +52,50 @@ def _steam_titles() -> list[str]:
     return titles
 
 
+SESSIONS = BASE / "game_sessions.json"
+EXTRA_FILE = BASE / "known_games.json"
+
+
+def _log_session(game: str, started: float, ended: float) -> None:
+    """Keep a play history — 'what have I been playing this week' needs
+    more than the session happening right now."""
+    minutes = round((ended - started) / 60)
+    if minutes < 3:            # alt-tabbing through a launcher isn't a session
+        return
+    try:
+        rows = json.loads(SESSIONS.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        rows = []
+    rows.append({"game": game, "minutes": minutes,
+                 "day": time.strftime("%Y-%m-%d", time.localtime(started)),
+                 "start": time.strftime("%H:%M", time.localtime(started))})
+    SESSIONS.write_text(json.dumps(rows[-400:], indent=1), encoding="utf-8")
+
+
+def learn_game(title: str) -> str:
+    """'Call this a game' — teaches TARS a title his Steam list can't see
+    (Epic, EA app, browser games)."""
+    title = (title or _foreground_title()).strip()
+    if len(title) < 3:
+        return "I can't see a window title to learn."
+    key = title.lower().split(" - ")[0][:40]
+    try:
+        known = json.loads(EXTRA_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        known = []
+    if key not in known:
+        known.append(key)
+        EXTRA_FILE.write_text(json.dumps(known, indent=1), encoding="utf-8")
+    return f"Got it — I'll count {key} as a game from now on."
+
+
+def _learned() -> list:
+    try:
+        return json.loads(EXTRA_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
 def in_session() -> bool:
     return bool(_session["game"])
 
@@ -65,12 +109,13 @@ def _check() -> None:
     import quiet
 
     title = _foreground_title().lower()
-    known = _steam_titles() + list(EXTRA_GAMES)
+    known = _steam_titles() + list(EXTRA_GAMES) + _learned()
     playing = next((g for g in known if g and g in title), None)
 
     if playing and not _session["game"]:
         _session.update(game=playing, since=time.time(), last_nudge=0.0)
     elif not playing and _session["game"]:
+        _log_session(_session["game"], _session["since"], time.time())
         _session.update(game=None, since=0.0, last_nudge=0.0)
 
     if _session["game"]:

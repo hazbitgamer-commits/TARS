@@ -1,5 +1,5 @@
 """Volume ducking: other apps (games, music, YouTube) dip to a quarter of
-their volume while TARS speaks, then come right back — so Jacob never
+their volume while TARS speaks, then come right back — so the owner never
 misses a reply mid-game. Used by tts.Speaker around every playback."""
 import os
 

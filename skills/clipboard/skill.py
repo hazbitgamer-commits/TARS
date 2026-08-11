@@ -1,6 +1,6 @@
 import pyperclip
 
-DESCRIPTION = ("Copy given text directly onto Jacob's clipboard so he can paste it anywhere, "
+DESCRIPTION = ("Copy given text directly onto the owner's clipboard so he can paste it anywhere, "
                "or read back whatever is currently on the clipboard. "
                "E.g. 'copy my email address to the clipboard', "
                "'copy this to the clipboard: hello world', 'what's on my clipboard'. "

@@ -192,7 +192,13 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.25)}
       <div id="temp">--<span>°C</span></div><div id="wdesc">waiting on the sky…</div></div>
     <div class="card"><h3>Timers</h3><div id="timers" class="empty">none running</div></div>
     <div class="card"><h3>To-do</h3><div id="todo" class="empty">all clear</div></div>
-    <div class="card" style="flex:1"><h3>Shopping</h3><div id="shopping" class="empty">nothing needed</div></div>
+    <!-- BEGIN dashboard_panel:games -->
+    <div class="card" style="flex:1"><h3>Steam Games</h3><div id="games" class="empty">no steam library found</div></div>
+    <!-- END dashboard_panel:games -->
+<div class="card" style="flex:1"><h3>Shopping</h3><div id="shopping" class="empty">nothing needed</div></div>
+<!-- BEGIN dashboard_panel:assessments -->
+    <div class="card" style="flex:1"><h3>Assessments</h3><div id="assessments" class="empty">nothing due</div></div>
+    <!-- END dashboard_panel:assessments -->
   </div>
 
   <div class="col">
@@ -202,7 +208,21 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.25)}
       <div id="streetView"></div>
       <div id="mapHint">say: “show London on the map” · “find cafes in Subiaco on the map” · “open street view of the Eiffel Tower”</div>
     </div>
-    <div class="card" id="feedCard"><h3>Conversation</h3><div id="feed"></div></div>
+    <div class="card" id="feedCard"><h3>Conversation</h3><div id="feed"></div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex:0 0 auto">
+        <input id="sayBox" placeholder="Type to TARS — same as talking to him…"
+          style="flex:1;background:rgba(5,9,16,.55);border:1px solid var(--panel-edge);
+                 border-radius:10px;color:var(--txt);padding:9px 12px;font:13px inherit;
+                 outline:none">
+        <label style="font-size:10.5px;color:var(--dim);letter-spacing:1px;
+               display:flex;align-items:center;gap:5px;cursor:pointer;user-select:none">
+          <input type="checkbox" id="sayAloud" style="accent-color:var(--cyan)"> ALOUD
+        </label>
+        <button id="sayBtn" style="background:rgba(70,212,255,.10);
+          border:1px solid rgba(70,212,255,.35);color:var(--cyan);border-radius:10px;
+          padding:9px 16px;font-size:12px;letter-spacing:2px;cursor:pointer">SEND</button>
+      </div>
+    </div>
   </div>
 
   <div class="col">
@@ -359,7 +379,8 @@ async function poll(){
     feedLen = log.length;
     const feed = document.getElementById("feed");
     feed.innerHTML = log.slice(-14).map(e =>
-      `<div class="msg ${e.kind==="heard"?"heard":"said"}">${esc(e.text||"")}</div>`).join("");
+      `<div class="msg ${e.kind==="heard"?"heard":"said"}">${
+         esc((e.text||"").replace(/^\[typed\] /, ""))}</div>`).join("");
     feed.scrollTop = feed.scrollHeight;
   }
 
@@ -391,7 +412,7 @@ function setStatus(st){
   document.documentElement.style.setProperty("--ring-c", RING[st] || RING.standby);
   document.getElementById("ring").style.setProperty("--ring-c", RING[st] || RING.standby);
   document.getElementById("statusWord").textContent = WORD[st] || st;
-  document.getElementById("statusText").textContent = st === "listening" ? "say it, jacob" :
+  document.getElementById("statusText").textContent = st === "listening" ? "listening" :
     st === "offline" ? "engine not answering" : 'say "hey tars"';
 }
 setInterval(poll, 2000); poll();
@@ -406,11 +427,48 @@ async function pollExtras(){
         `<div class="rowitem"><span>${esc(i)}</span></div>`).join("");
       } else { el.className = "empty"; el.textContent = id==="todo" ? "all clear" : "nothing needed"; }
     }
+    /* BEGIN dashboard_panel:assessments */
+    const aEl = document.getElementById("assessments");
+    if(aEl){
+      const items = x.assessments || [];
+      // "2026-08-11" means nothing at a glance — say when it actually is
+      const dueWord = iso => {
+        if(!iso) return "";
+        const d = new Date(iso + "T00:00:00"), now = new Date();
+        const days = Math.round((d - new Date(now.getFullYear(), now.getMonth(),
+          now.getDate())) / 86400000);
+        if(days === 0) return "today";
+        if(days === 1) return "tomorrow";
+        if(days > 1 && days < 7) return d.toLocaleDateString(undefined, {weekday:"short"});
+        if(days < 0) return `${-days}d overdue`;
+        return d.toLocaleDateString(undefined, {day:"numeric", month:"short"});
+      };
+      if(items.length){ aEl.className=""; aEl.innerHTML = items.slice(0,6).map(i =>
+        `<div class="rowitem"><span>${esc(i.what)}</span><span class="when">${esc(dueWord(i.due))}</span></div>`).join("");
+      } else { aEl.className = "empty"; aEl.textContent = "nothing due"; }
+    }
+    /* END dashboard_panel:assessments */
+    /* BEGIN dashboard_panel:games */
+    const gEl = document.getElementById("games");
+    if(gEl){
+      const items = x.games || [];
+      if(items.length){ gEl.className=""; gEl.innerHTML = items.map(i =>
+        `<div class="rowitem"><span>${esc(i.name)}</span></div>`).join("")
+        + ((x.games_count||0) > items.length ?
+           `<div class="rowitem"><span class="when">+ ${x.games_count - items.length} more</span></div>` : "");
+      } else { gEl.className = "empty"; gEl.textContent = "no steam library found"; }
+    }
+    /* END dashboard_panel:games */
     const k = document.getElementById("kipp");
     if((x.kipp||[]).length){
-      k.className = ""; k.innerHTML = x.kipp.map(l => {
-        const done = l.startsWith("DONE");
-        return `<div><b>${done ? "✔" : "…"}</b> ${esc(l.replace(/^(DONE: |PROPOSED [^:]*: )/,"").split(" — ")[0]).slice(0,60)}</div>`;
+      k.className = ""; k.innerHTML = x.kipp.map(r => {
+        // now {what, state} — a reverted change must not look like a win
+        const mark = {shipped:"✔", reverted:"↩", failed:"✕",
+                      asking:"?", proposed:"…"}[r.state] || "…";
+        const tone = {shipped:"var(--green)", reverted:"var(--amber)",
+                      failed:"var(--red)"}[r.state] || "var(--dim)";
+        return `<div><b style="color:${tone}">${mark}</b> ${esc(r.what)}` +
+               ` <span style="color:var(--faint)">${esc(r.state)}</span></div>`;
       }).join("");
     }
     const lrn = document.getElementById("learning");
@@ -484,6 +542,34 @@ async function pickVoice(id){
     statusEl.textContent = "couldn't reach TARS to change the voice";
   }
 }
+
+/* ---------- type to TARS ---------- */
+const sayBox = document.getElementById("sayBox"),
+      sayBtn = document.getElementById("sayBtn"),
+      sayAloud = document.getElementById("sayAloud");
+async function sendTyped(){
+  const text = sayBox.value.trim();
+  if(!text) return;
+  const feed = document.getElementById("feed");
+  feed.insertAdjacentHTML("beforeend",
+    `<div class="msg heard">${esc(text)}</div>`);
+  feed.scrollTop = feed.scrollHeight;
+  sayBox.value = ""; sayBtn.disabled = true; sayBtn.textContent = "…";
+  try{
+    const r = await (await fetch("/api/say",{method:"POST",
+      body: JSON.stringify({text, speak: sayAloud.checked})})).json();
+    feed.insertAdjacentHTML("beforeend",
+      `<div class="msg said">${esc(r.reply || "…")}</div>`);
+    feed.scrollTop = feed.scrollHeight;
+    feedLen = -1;                      // let the poller resync
+  }catch(e){
+    feed.insertAdjacentHTML("beforeend",
+      `<div class="msg said">(couldn't reach the engine)</div>`);
+  }
+  sayBtn.disabled = false; sayBtn.textContent = "SEND"; sayBox.focus();
+}
+sayBtn.onclick = sendTyped;
+sayBox.addEventListener("keydown", e => { if(e.key === "Enter") sendTyped(); });
 
 /* ---------- routines ---------- */
 async function pollRoutines(){

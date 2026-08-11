@@ -5,7 +5,7 @@ finished skills (each `skills/<name>/skill.py`), newest first, based on when
 the file was written.
 
 This powers the "Learning" card on the dashboard, and also answers it out
-loud if Jacob asks.
+loud if the owner asks.
 
 **Say:** "what are you currently learning" / "what's the newest skill you've
 taught yourself" / "what have you learned lately"

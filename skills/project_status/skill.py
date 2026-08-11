@@ -1,6 +1,6 @@
 """'Where did I leave off with Goal Mystro?' — TARS reads a project's git
 history, newest files, and any plan/README notes, then says where it stands
-and what the obvious next step looks like. Jacob runs ~9 projects at once;
+and what the obvious next step looks like. the owner runs ~9 projects at once;
 this is his re-entry ramp."""
 import datetime
 import subprocess
@@ -16,13 +16,15 @@ MODEL = bg_model()
 ROOTS = (Path.home() / "Projects", Path.home() / "Desktop")
 SKIP = {"tools", "screenshots", "videos", "scripts", "node_modules"}
 
-DESCRIPTION = ("Catch Jacob up on one of his PROJECTS — 'where did I leave "
-               "off with Goal Mystro', 'what's the state of Undergrid', "
-               "'what was I doing on the solar app', 'what projects do I "
-               "have'. Reads the project's recent changes and notes. NOT "
-               "for TARS's own upgrades (improve) and NOT for the day's "
-               "recap (day_recap).")
-ARGS = {"project": "the project name, or 'list' for all of them"}
+DESCRIPTION = ("Catch the owner up on one of his PROJECTS (also called repos or "
+               "repositories) — 'where did I leave off with Goal Mystro', "
+               "'what's the state of Undergrid', 'what was I doing on the "
+               "solar app', 'what projects do I have', 'what repos are "
+               "installed on this PC', 'list my repositories'. Reads the "
+               "project's recent changes and notes. NOT for TARS's own "
+               "upgrades (improve) and NOT for the day's recap (day_recap).")
+ARGS = {"project": "the project name, or 'list' for all of them (also "
+                    "triggered by 'repos'/'repositories'/'installed')"}
 
 
 def _projects() -> dict:
@@ -66,9 +68,11 @@ def run(args: dict) -> str:
     projects = _projects()
     if not projects:
         return "I can't find any project folders to look at."
-    if want in ("list", "all", "", "everything"):
+    if want in ("list", "all", "", "everything", "repo", "repos",
+                "repository", "repositories", "installed"):
         names = sorted(p.name for p in projects.values())
-        return (f"You've got {len(names)} projects: " + ", ".join(names[:10])
+        return (f"You've got {len(names)} projects (repos) installed: "
+                + ", ".join(names[:10])
                 + ". Ask where you left off with any of them.")
 
     path = _match(want, projects)
@@ -101,7 +105,7 @@ def run(args: dict) -> str:
         r = requests.post(OLLAMA_URL, json={
             "model": MODEL, "stream": False, "think": False,
             "messages": [{"role": "user", "content":
-                "You are TARS catching Jacob up on his own project. From "
+                "You are TARS catching the owner up on his own project. From "
                 "these facts, say in THREE short spoken sentences: what the "
                 "project is, where it stands right now, and the obvious next "
                 "step. Plain text for text-to-speech, no markdown, nothing "

@@ -1,4 +1,4 @@
-"""Jacob's overnight work queue — hand TARS jobs before bed ("add to your
+"""the owner's overnight work queue — hand TARS jobs before bed ("add to your
 overnight queue: give the CAD app a save button"), he works through them
 between 10pm and 7am and announces the results in the morning."""
 import sys

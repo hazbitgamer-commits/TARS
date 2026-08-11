@@ -6,7 +6,7 @@ BASE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BASE))
 
 DESCRIPTION = ("Say WHO is on camera by recognising known faces: 'who is this', "
-               "'who can you see', 'who's in the room', 'is that Jacob'.")
+               "'who can you see', 'who's in the room', 'is that the owner'.")
 ARGS = {}
 
 
@@ -16,7 +16,7 @@ def run(args: dict) -> str:
     seen = faces.identify()
     if not seen:
         return "I can't see any faces right now."
-    # report EVERYONE, left to right — it used to say "I can see Jacob"
+    # report EVERYONE, left to right — it used to say "I can see the owner"
     # with two people in frame
     seen = sorted(seen, key=lambda s: s.get("box", [0])[0])
     named = list(dict.fromkeys(s["name"] for s in seen if s["name"]))

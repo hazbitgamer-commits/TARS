@@ -23,13 +23,13 @@ class Transcriber:
             audio_16k_f32, language="en", beam_size=2, vad_filter=True,
             condition_on_previous_text=False,
             initial_prompt=(
-                "Jacob is talking to TARS, his computer voice assistant. "
+                "the owner is talking to TARS, his computer voice assistant. "
                 "TARS opens apps, folders like the TARS folder, and files. "
                 "Apps include Claude, Brave, Chrome, YouTube, Spotify, Steam, "
                 "Discord, Obsidian, and File Explorer. TARS can show its brain "
                 "page and its dashboard, and controls the Robovac vacuum, "
-                "which Jacob calls Basel. Jacob often says: override quiet "
-                "hours. Jacob uses TARS's Mini CAD app, pronounced Mini CAD, "
+                "which the owner calls Basel. the owner often says: override quiet "
+                "hours. the owner uses TARS's Mini CAD app, pronounced Mini CAD, "
                 "and a website called CADAM, pronounced CAD-am."
             ),
         )
@@ -44,7 +44,7 @@ class Transcriber:
         self.last_confidence = (sum(logprobs) / len(logprobs)) if logprobs else -2.0
         low = text.lower()
         if any(a in low for a in self.ARTIFACTS):
-            return ""  # a caption ghost, not Jacob
+            return ""  # a caption ghost, not the owner
         try:  # repair TARS's own words — whisper has never heard of Basel,
             import hearing  # Mini CAD or CADAM, but TARS has
 

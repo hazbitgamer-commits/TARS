@@ -1,17 +1,17 @@
 """TARS's hands: click things on screen by describing them, visibly.
 
-v2 polish (Jacob: "I want to see how it does things"):
+v2 polish (the owner: "I want to see how it does things"):
   - TWO-STAGE look: rough find on the downscaled full screen, then a zoomed
     full-resolution second look at that spot for a precise click — fixes the
     old blind spot with small targets like taskbar icons.
   - VISIBLE glide: the cursor travels smoothly to the target and circles it
-    once before clicking, so Jacob can confirm it picked the right element
+    once before clicking, so the owner can confirm it picked the right element
     (e.g. the actual search bar, not a lookalike) — and knock the mouse to
     abort (pyautogui's corner failsafe also kills it instantly).
   - CLICK-AND-TYPE: 'search for dog videos' = click the box, type, enter —
     one command.
   - HARD GATE: refuses to click anything that spends money, sends a
-    message, or deletes — those clicks stay Jacob's (spec §8).
+    message, or deletes — those clicks stay the owner's (spec §8).
 """
 import base64
 import io
@@ -27,7 +27,7 @@ DESCRIPTION = ("CLICK things on screen with the visible mouse, described in "
                "words: 'click the first video', 'press play', 'click the "
                "search bar'. Can also TYPE after clicking: 'click the search "
                "bar and search for funny dogs' (target + type + enter). "
-               "Jacob watches the cursor glide there before it clicks. "
+               "the owner watches the cursor glide there before it clicks. "
                "NOT for opening apps by name (open_app is faster) and NOT "
                "for continuous dictation (that's dictation).")
 ARGS = {"target": "what to click, described in words",
@@ -41,9 +41,9 @@ VISION_MODEL = "qwen2.5vl:7b"
 VIEW_WIDTH = 1280   # pass-1 downscale; pass 2 looks at full-res crop
 ZOOM = 440          # px square around the rough hit for the precise look
 
-# clicks that spend real money, send, or destroy stay Jacob's — no
+# clicks that spend real money, send, or destroy stay the owner's — no
 # exceptions anywhere. FUT COIN actions (bid/buy now/list) are allowed
-# ONLY while the FC web app is the window in front (Jacob's 2026-07-22
+# ONLY while the FC web app is the window in front (the owner's 2026-07-22
 # call — in-game coins, his account, his command). Real-money terms
 # (purchase/pay/checkout) stay blocked even there: FUT Points cost cash.
 FORBIDDEN = ("purchase", "pay", "checkout", "subscribe",
@@ -97,7 +97,7 @@ def _ask_eyes(png: bytes, target: str, width: int, height: int):
 
 # "the most relevant/interesting video thumbnail" describes an opinion, not
 # a pixel — the eyes model has nothing to compare against and just reports
-# not-found (Jacob heard "I can't see it" for exactly this phrasing). Result
+# not-found (the owner heard "I can't see it" for exactly this phrasing). Result
 # lists are already ordered by relevance, so treat that as "the first one".
 SUBJECTIVE_PICKS = ("relevant", "interesting", "best", "top", "recommended")
 
@@ -228,7 +228,7 @@ def _score_walk(win, match_words, type_hint):
 
 # windows TARS must never click inside: his own console, his status pill,
 # and Windows decoration surfaces. When one of these has focus, the click
-# Jacob wants is in the app BEHIND them.
+# the owner wants is in the app BEHIND them.
 SELF_CLASSES = ("CASCADIA_HOSTING_WINDOW_CLAS", "ConsoleWindowClass",
                 "TkTopLevel")
 DECO_CLASSES = ("Shell_TrayWnd", "Shell_SecondaryTrayWnd", "Worker Window",
@@ -243,7 +243,7 @@ def _is_self_or_deco(w) -> bool:
 
 
 def _target_window(auto):
-    """The window Jacob actually means: the foreground one — unless that's
+    """The window the owner actually means: the foreground one — unless that's
     TARS's own console/pill (he often talks with it focused; typing into it
     once swallowed a whole search silently). Then: first real app window
     beneath it in z-order."""
@@ -262,10 +262,12 @@ def _target_window(auto):
     return fg
 
 
-def _uia_locate(target: str):
+def _uia_locate(target: str, threshold: float = 0.75):
     """The FAST path (~1s): ask Windows' accessibility tree for the element
     instead of looking at pixels. Returns (x, y) or None — games and
-    unnamed canvases return None and fall through to the vision eyes."""
+    unnamed canvases return None and fall through to the vision eyes.
+    Lower `threshold` values (see `_uia_locate_hint`) turn this into a
+    best-guess finder instead of a confident-match finder."""
     import re
     import time as _t
 
@@ -280,7 +282,7 @@ def _uia_locate(target: str):
 
     win = _target_window(auto)
     best, score = _score_walk(win, match_words, type_hint)
-    if score < 0.75 and (win.ClassName or "").startswith("Chrome_WidgetWin"):
+    if score < threshold and (win.ClassName or "").startswith("Chrome_WidgetWin"):
         # Chromium browsers (Brave/Chrome/Edge) hide the PAGE's elements
         # until an accessibility client pokes the document — poke, give the
         # renderer a beat to publish the tree, then look again
@@ -292,12 +294,24 @@ def _uia_locate(target: str):
                 best, score = _score_walk(win, match_words, type_hint)
         except Exception:
             pass
-    return best if score >= 0.75 else None
+    return best if score >= threshold else None
+
+
+def _uia_locate_hint(target: str):
+    """Last resort when nothing meets the confident-match bar: a much
+    looser pass over the same accessibility tree, so a button that got
+    MISSED by the strict matcher (close name, wrong control type, odd
+    phrasing) still gets pointed out instead of the owner hearing a flat
+    'I can't see it' with no way to find the thing himself."""
+    try:
+        return _uia_locate(target, threshold=0.35)
+    except Exception:
+        return None
 
 
 def _highlight(x: int, y: int, radius: int = 14) -> None:
     """Trace a quick circle around the target before the click lands — a
-    silent 'is this the one?' so Jacob can see exactly which element got
+    silent 'is this the one?' so the owner can see exactly which element got
     picked (search bars especially look alike) instead of finding out only
     after the click, then having to repeat the whole command."""
     import math
@@ -310,7 +324,7 @@ def _highlight(x: int, y: int, radius: int = 14) -> None:
 
 
 def _glide_and_click(x: int, y: int, double: bool) -> None:
-    """Rapid: dart to the target, circle it once so Jacob can confirm it's
+    """Rapid: dart to the target, circle it once so the owner can confirm it's
     the right spot, then click. Corner-slam failsafe still aborts everything."""
     pyautogui.moveTo(x, y, duration=0.12)
     _highlight(x, y)
@@ -346,6 +360,11 @@ def run(args: dict) -> str:
         except Exception:
             return f"I couldn't make sense of the screen looking for {target}."
     if spot is None:
+        hint = _uia_locate_hint(target)
+        if hint is not None:
+            _highlight(*hint)
+            return (f"I can't find an exact match for {target}, but I "
+                     "circled the closest thing on screen — take a look.")
         return f"I can't see {target} on that screen right now."
 
     _glide_and_click(spot[0], spot[1],

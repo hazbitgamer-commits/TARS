@@ -11,7 +11,7 @@ MODEL = bg_model()
 
 DESCRIPTION = ("Answer from TARS's permanent memory vault. E.g. 'what do you know about "
                "me', 'do you remember what I said about my monitors'.")
-ARGS = {"topic": "what Jacob wants recalled"}
+ARGS = {"topic": "what the owner wants recalled"}
 
 
 STOPWORDS = {"when", "did", "i", "the", "a", "an", "about", "what", "do", "you",
@@ -52,7 +52,7 @@ def run(args: dict) -> str:
         r = requests.post(OLLAMA_URL, json={
             "model": MODEL, "stream": False, "think": False,
             "messages": [{"role": "user", "content":
-                f"Jacob asked his assistant TARS: {topic!r}. These notes are from "
+                f"the owner asked his assistant TARS: {topic!r}. These notes are from "
                 f"TARS's memory vault:\n{notes}\n\nAnswer in one to three short "
                 f"spoken sentences using only these notes. Plain text, no markdown."}],
             "options": {"num_predict": 140}}, timeout=90)

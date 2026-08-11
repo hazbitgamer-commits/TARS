@@ -1,5 +1,5 @@
 """The goodnight wrap-up: quick recap of today + tomorrow's calendar +
-anything left on the to-do list. main.py speaks it when Jacob says
+anything left on the to-do list. main.py speaks it when the owner says
 goodnight, right before sleep mode."""
 import datetime
 import json
@@ -53,5 +53,5 @@ def run(args: dict) -> str:
         pass
 
     if not parts:
-        return "Quiet day, clear tomorrow. Sleep well, Jacob."
-    return ". ".join(p[0].upper() + p[1:] for p in parts) + ". Sleep well, Jacob."
+        return "Quiet day, clear tomorrow. Sleep well, the owner."
+    return ". ".join(p[0].upper() + p[1:] for p in parts) + ". Sleep well, the owner."

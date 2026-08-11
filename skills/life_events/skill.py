@@ -11,7 +11,7 @@ import re
 from dateutil import parser as dateparser
 
 DESCRIPTION = ("Remember or recall a dated personal milestone/life event, e.g. "
-               "first day of school, a graduation, when Jacob moved house, his "
+               "first day of school, a graduation, when the owner moved house, his "
                "first day at a job. E.g. 'my first day at primary school was 1st "
                "of February 2016 at Orbin Grove Primary School' to store one, or "
                "'when was my first day of school' / 'what school did I start at' "

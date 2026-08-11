@@ -27,7 +27,7 @@ DESCRIPTION = ("Give TARS a whole JOB on the PC and let him work it out — "
                "and tells you honestly how far he got. For a single click "
                "use click_screen; for an explicit A-then-B chain use "
                "screen_task.")
-ARGS = {"goal": "what Jacob wants done, in his own words"}
+ARGS = {"goal": "what the owner wants done, in his own words"}
 
 
 def _cs():
@@ -127,13 +127,13 @@ def _ask(prompt: str, want_json: bool = True) -> dict | str:
 def _plan(goal: str, screen: str, history: list[str]) -> dict:
     done = ("\nAlready done: " + "; ".join(history)) if history else ""
     return _ask(
-        f"You are TARS's PC agent. Jacob's goal: {goal!r}\n"
+        f"You are TARS's PC agent. the owner's goal: {goal!r}\n"
         f"What's on screen now:\n{screen}{done}\n\n"
         "RULES: to start a program or website ALWAYS use the open step — "
         "never try to launch apps by clicking around a browser or typing "
         "into a search bar. If something in 'already done' failed, do NOT "
         "repeat it: change approach. STOP with done as soon as everything "
-        "Jacob literally asked for has happened — never add extra work he "
+        "the owner literally asked for has happened — never add extra work he "
         "didn't ask for (no saving, closing, tidying up or 'improving').\n"
         "Give the NEXT SINGLE step toward the goal. Step kinds:\n"
         '{"do":"open","target":"<app or website name>"}\n'
@@ -366,7 +366,7 @@ def _do(step: dict, cs) -> str:
         target = str(step.get("target", ""))
         if cs._forbidden(target):
             raise PermissionError("that click spends, sends or deletes — "
-                                  "Jacob does those himself")
+                                  "the owner does those himself")
         spot = None
         try:
             spot = cs._uia_locate(target)

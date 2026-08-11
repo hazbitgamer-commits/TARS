@@ -1,4 +1,4 @@
-"""The big brain: hands complex/coding tasks to Claude (Jacob's subscription,
+"""The big brain: hands complex/coding tasks to Claude (the owner's subscription,
 via the official Agent SDK). Runs in the background; TARS announces the result.
 
 Claude gets full hands INSIDE tars/workshop, with the hard-block rules from
@@ -13,7 +13,7 @@ from pathlib import Path
 DESCRIPTION = ("Send a complex task to the heavy-lift Claude brain: writing code or scripts, "
                "building things, research that needs multiple steps, fixing files. Takes a "
                "minute or more; TARS reports back when done.")
-ARGS = {"task": "the full task, in Jacob's words"}
+ARGS = {"task": "the full task, in the owner's words"}
 
 BASE = Path(__file__).resolve().parents[2]
 WORKSHOP = BASE / "workshop"
@@ -26,7 +26,7 @@ RULES = (
     "Hard rules, no exceptions: never delete files outside the working folder; "
     "never spend money or make purchases; never send emails or messages; "
     "keep all new files inside the working folder unless the task explicitly "
-    "names another location. Jacob is a beginner — keep anything he'll see simple.\n"
+    "names another location. the owner is a beginner — keep anything he'll see simple.\n"
     f"To run Python, always use TARS's own interpreter: {_TARS_PY}"
 )
 
@@ -74,19 +74,22 @@ def _worker(task: str) -> None:
                     if k.startswith(("ANTHROPIC", "CLAUDE"))]:
             os.environ.pop(key, None)
         if not token:
-            announce.post("The big brain isn't connected yet — Jacob needs to "
+            announce.post("The big brain isn't connected yet — the owner needs to "
                           "set up my Claude token. It's in the readme.")
             return
         os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = token
 
         import anyio
+        import quiet_spawn
         from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
+
+        quiet_spawn.hide()  # no black console window over the owner's desktop
 
         WORKSHOP.mkdir(exist_ok=True)
         prompt = (
-            f"You are TARS's heavy-lift brain, working for Jacob on his Windows PC.\n"
+            f"You are TARS's heavy-lift brain, working for the owner on his Windows PC.\n"
             f"Working folder: {WORKSHOP}\n{RULES}\n\n"
-            f"Jacob's spoken request: {task!r}\n\n"
+            f"the owner's spoken request: {task!r}\n\n"
             "When finished, end your final message with a line starting exactly "
             "'SPOKEN: ' — one or two friendly sentences summarizing the outcome, "
             "suitable for text-to-speech. Always NAME any files you created "
@@ -98,7 +101,10 @@ def _worker(task: str) -> None:
             allowed_tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep",
                            "WebSearch", "WebFetch"],
             setting_sources=[],  # a clean session — no inherited configs/plugins
-            max_turns=50,
+            # 50 wasn't enough for real jobs — the owner's dashboard-panel build
+            # died on "Reached maximum number of turns (50)" after doing most
+            # of the work. A wall mid-job wastes everything spent getting there.
+            max_turns=120,
         )
 
         async def go() -> str:

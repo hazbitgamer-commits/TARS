@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 DESCRIPTION = ("Open the TARS dashboard home page in its own TARS window — status, "
                "timers, personality sliders, activity, skills, brain stats.")
-ARGS = {"confirmed": "leave empty — the brain sets 'true' only after Jacob says yes"}
+ARGS = {"confirmed": "leave empty — the brain sets 'true' only after the owner says yes"}
 
 REOPEN_WINDOW = 20  # seconds — a second "open the dashboard" this soon is
 # probably an accidental repeat (double command, misheard echo), not a real ask

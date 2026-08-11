@@ -1,4 +1,4 @@
-"""Live solar readings from Jacob's SolaX inverter (cloud realtime API —
+"""Live solar readings from the owner's SolaX inverter (cloud realtime API —
 the same data his solar monitoring app uses; token/serial in .env)."""
 import os
 import sys
@@ -9,7 +9,7 @@ import requests
 BASE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BASE))
 
-DESCRIPTION = ("Jacob's SOLAR PANELS, live — 'how much power am I making', "
+DESCRIPTION = ("the owner's SOLAR PANELS, live — 'how much power am I making', "
                "'solar update', 'how much has the solar made today', 'am I "
                "exporting to the grid'. Reads the real SolaX inverter. NOT "
                "for the weather (weather skill).")

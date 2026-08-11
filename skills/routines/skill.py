@@ -2,7 +2,7 @@
 of the house TARS can reach, silences his announcements, parks the vacuum
 and sets the scene; "work mode" and "bedtime" likewise.
 
-Routines live in routines.json so Jacob can invent his own by voice:
+Routines live in routines.json so the owner can invent his own by voice:
 "make a routine called gaming that mutes announcements and pauses Basel".
 Each step is just a skill call, so anything TARS can do, a routine can do.
 """
@@ -21,13 +21,13 @@ DESCRIPTION = ("ROUTINES — one phrase that does several things: 'movie "
                "and NOT for the goodnight wrap-up (nightly_wrap).")
 ARGS = {"name": "which routine to run, or 'list'",
         "action": "'run' (default), 'list', 'create', 'add'",
-        "steps": "for create/add: what it should do, in Jacob's words"}
+        "steps": "for create/add: what it should do, in the owner's words"}
 
 # sensible starters, all built from skills TARS already has
 DEFAULTS = {
     "movie night": {
         # say ONLY what the steps actually do — the first draft promised
-        # "lights down" and Jacob has no smart lights
+        # "lights down" and the owner has no smart lights
         "say": "Movie night. Kitchen speaker down, Basel parked, quiet hours on.",
         "steps": [["speakers", {"action": "volume", "room": "kitchen",
                                 "level": "20"}],
@@ -48,7 +48,7 @@ DEFAULTS = {
                   ["quiet_hours", {"action": "on"}]],
     },
     "good morning": {
-        "say": "Morning, Jacob.",
+        "say": "Morning, the owner.",
         "steps": [["agents", {"action": "briefing"}],
                   ["quiet_hours", {"action": "off"}]],
     },
@@ -61,7 +61,7 @@ def _load() -> dict:
     except (OSError, json.JSONDecodeError):
         saved = {}
     merged = dict(DEFAULTS)
-    merged.update(saved)          # Jacob's edits win over the starters
+    merged.update(saved)          # the owner's edits win over the starters
     return merged
 
 
@@ -71,7 +71,7 @@ def _save(data: dict) -> None:
 
 def _compose(wanted: str) -> list:
     """Turn 'mute announcements and park Basel' into real skill calls, so
-    Jacob can invent routines by voice without anyone wiring them by hand."""
+    the owner can invent routines by voice without anyone wiring them by hand."""
     import requests
 
     from skills_engine import SkillBox
@@ -94,7 +94,7 @@ def _compose(wanted: str) -> list:
             "messages": [{"role": "user", "content":
                 "TARS's skills and their arguments:\n"
                 + json.dumps(catalog)[:9000]
-                + f"\n\nJacob wants a routine that: {wanted!r}\n"
+                + f"\n\nThe owner wants a routine that: {wanted!r}\n"
                 'Reply JSON: {"steps": [{"skill": "<exact skill name>", '
                 '"args": {...}}, ...]} — only skills from the list, real '
                 "argument names, 1 to 5 steps, nothing that spends money or "

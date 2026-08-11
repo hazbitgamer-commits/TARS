@@ -10,7 +10,7 @@ DESCRIPTION = ("Set, list, or cancel timers and reminders. E.g. 'set a timer for
                "'cancel my timers', 'what timers are running'.")
 ARGS = {"action": "'set', 'list', or 'cancel'",
         "when": "duration like '10 minutes' / '1 hour 30 minutes', or clock time like '5:30 pm'",
-        "label": "what the reminder is for, if Jacob said one"}
+        "label": "what the reminder is for, if the owner said one"}
 
 TIMERS_FILE = Path(__file__).resolve().parents[2] / "timers.json"
 

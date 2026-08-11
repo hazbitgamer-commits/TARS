@@ -1,6 +1,6 @@
 """Voice control of TARS's personality settings: set, adjust, list, remove.
 
-Creating new settings by voice is disabled by Jacob's request — the set of
+Creating new settings by voice is disabled by the owner's request — the set of
 settings only shrinks unless he asks Claude to add one deliberately.
 """
 import json

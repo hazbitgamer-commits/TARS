@@ -22,7 +22,7 @@ DESCRIPTION = ("Redesign the LOOK of TARS's brain visualization page (the neuron
 ARGS = {"request": "plain-English description of the visual change wanted, e.g. "
                     "'smaller circles, thinner lines, new colours, add a legend'"}
 
-BRAIN_HTML = Path(r"C:\Users\hazbi\Projects\tars\dashboard\brain.html")
+BRAIN_HTML = (Path(__file__).resolve().parents[2] / "dashboard" / "brain.html")
 
 # Palette 0 must match the colours currently baked into brain.html (the
 # starting point). Each later entry is a full alternate look: category
@@ -39,7 +39,7 @@ PALETTES = [
      "agents": ["#34d399", "#fb923c", "#e879f9", "#38bdf8", "#facc15"],
      "accent": "#22d3ee", "synapse": "244,63,94", "edge": "110,120,140"},
 ]
-CATEGORY_KEYS = ["About Jacob", "Knowledge", "People", "Projects", "vault"]
+CATEGORY_KEYS = ["About the owner", "Knowledge", "People", "Projects", "vault"]
 AGENT_KEYS = ["Scout", "Archivist", "Librarian", "Curator", "Kipp"]
 
 
@@ -80,7 +80,7 @@ def _write_style(html: str, s: dict) -> str:
 
 
 def _current_palette_index(html: str) -> int:
-    m = re.search(r'const COLORS=\{"About Jacob":"(#[0-9a-fA-F]{6})"', html)
+    m = re.search(r'const COLORS=\{"About the owner":"(#[0-9a-fA-F]{6})"', html)
     if not m:
         return -1
     hexval = m.group(1).lower()

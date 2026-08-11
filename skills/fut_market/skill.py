@@ -1,20 +1,20 @@
-"""Open EA Sports FC 26's Ultimate Team Web App and help Jacob jump straight to a
+"""Open EA Sports FC 26's Ultimate Team Web App and help the owner jump straight to a
 player's transfer-market listing. Deliberately does NOT log in, buy, sell, or predict
-prices on Jacob's behalf — the FUT Web App requires Jacob's own EA login (with 2FA),
+prices on the owner's behalf — the FUT Web App requires the owner's own EA login (with 2FA),
 and TARS never makes purchases or trades for him. What it CAN do: open the correct
 page instantly, and copy a player's name to the clipboard so it's one paste away from
-the search bar, saving Jacob the typing."""
+the search bar, saving the owner the typing."""
 import re
 import webbrowser
 
 import pyperclip
 
-DESCRIPTION = ("Open EA Sports FC 26's Ultimate Team Web App in the browser so Jacob can "
+DESCRIPTION = ("Open EA Sports FC 26's Ultimate Team Web App in the browser so the owner can "
                "check the transfer market, and copy a player's name to the clipboard ready "
                "to paste into the search bar. E.g. 'open the FC 26 web app', 'look up Mbappe "
                "on the FUT market', 'check Haaland's price on the web app'. TARS only opens "
-               "the page and hands Jacob a paste-ready name — logging in, buying, and selling "
-               "always stay Jacob's own clicks, since TARS never spends money or makes "
+               "the page and hands the owner a paste-ready name — logging in, buying, and selling "
+               "always stay the owner's own clicks, since TARS never spends money or makes "
                "purchases for him. For 'notify me when to sell', open the page with this "
                "skill first, then say 'watch this and tell me when the price drops' to hand it "
                "to the screen_watch skill.")

@@ -1,6 +1,6 @@
 """Voice controls for Kipp, TARS's always-on self-improvement agent
 (improve.py). Kipp reflects on the day's transcripts whenever TARS is idle
-and automatically upgrades TARS's own code — this skill is Jacob's window
+and automatically upgrades TARS's own code — this skill is the owner's window
 into that, and his off-switch.
 """
 import sys

@@ -56,7 +56,7 @@ def run(args: dict) -> str:
         url = ""
 
     if not url:
-        # graceful fallback: at least land Jacob on the results page
+        # graceful fallback: at least land the owner on the results page
         webbrowser.open("https://www.youtube.com/results?search_query="
                         + query.replace(" ", "+"))
         return (f"I couldn't lock onto a track for {query}, so I've opened "

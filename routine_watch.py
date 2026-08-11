@@ -1,7 +1,7 @@
 """Routines that fire themselves.
 
 A routine can carry a trigger: a clock time ("bedtime at 22:30"), or a
-context event — a game starting (game_watch), or Jacob going idle. Ticked
+context event — a game starting (game_watch), or the owner going idle. Ticked
 about once a second from main's standby loop; the real checks run once a
 minute. Announcements say WHICH routine fired, so nothing happens to the
 house without TARS saying so.

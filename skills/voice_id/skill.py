@@ -1,6 +1,6 @@
 """Voice profiles — 'learn my voice', 'whose voice is this', 'forget
 Sophie's voice'. Unknown speakers automatically get the guest treatment
-(no personal facts), so Jacob never has to toggle guest mode by hand."""
+(no personal facts), so the owner never has to toggle guest mode by hand."""
 import sys
 from pathlib import Path
 
@@ -8,11 +8,11 @@ BASE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BASE))
 
 DESCRIPTION = ("VOICE profiles — 'learn my voice' / 'remember my voice as "
-               "Jacob' (TARS fingerprints the speaker), 'whose voice do you "
+               "the owner' (TARS fingerprints the speaker), 'whose voice do you "
                "know', 'forget Sophie's voice'. Different from face "
                "recognition (face_learn), which uses the camera.")
 ARGS = {"action": "'learn' (default), 'list', or 'forget'",
-        "name": "whose voice — defaults to Jacob for 'learn my voice'"}
+        "name": "whose voice — defaults to the owner for 'learn my voice'"}
 
 
 def run(args: dict) -> str:
@@ -33,4 +33,4 @@ def run(args: dict) -> str:
     audio = getattr(main, "LAST_AUDIO", None)
     if audio is None:
         return "I don't have your last recording to learn from — say it again."
-    return speaker.enroll(name or "Jacob", audio)
+    return speaker.enroll(name or "the owner", audio)

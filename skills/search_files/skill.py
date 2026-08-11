@@ -2,7 +2,7 @@ import os
 import time
 from pathlib import Path
 
-DESCRIPTION = ("Find files OR folders by name in Jacob's user folders (Desktop, Documents, "
+DESCRIPTION = ("Find files OR folders by name in the owner's user folders (Desktop, Documents, "
                "Downloads, Pictures, Videos, Music) and optionally open the best match. "
                "Understands 'latest'/'newest' as most recent.")
 ARGS = {"name": "part of the file or folder name to look for",
@@ -49,7 +49,18 @@ def run(args: dict) -> str:
     best = matches[0]
     kind = "folder" if best.is_dir() else "file"
     if str(args.get("open", "")).lower() == "true":
-        os.startfile(best)
+        # os.startfile doesn't exist off Windows — searching works fine on a
+        # Mac, so only the OPEN needed the cross-platform version
+        import sys as _sys
+        from pathlib import Path as _Path
+
+        _base = _Path(__file__).resolve().parents[2]
+        if str(_base) not in _sys.path:
+            _sys.path.insert(0, str(_base))
+        from platform_caps import open_file
+
+        if not open_file(best):
+            return f"Found {best.name} but couldn't open it."
         return f"Opening {best.name}."
     where = best.parent.name
     if len(matches) == 1:

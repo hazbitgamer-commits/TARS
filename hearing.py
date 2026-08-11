@@ -1,6 +1,6 @@
 """Hearing repair — fix garbled words using TARS's OWN vocabulary.
 
-Whisper mangles the words that matter most: names it has never seen. Jacob's
+Whisper mangles the words that matter most: names it has never seen. the owner's
 logs contain "Minicat 3D" and "minicab" (Mini CAD), "CADM" (CADAM), "Basil"
 (Basel the vacuum), "Toss" (TARS), "design, may a" (design me a). TARS knows
 what those words should be — his skills, apps, designs, routines, rooms and
@@ -18,7 +18,7 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent
 LOG = BASE / "logs" / "hearing_fixes.log"
 
-# known mishearings straight from Jacob's transcripts
+# known mishearings straight from the owner's transcripts
 ALIASES = {
     "minicat": "mini cad", "minicab": "mini cad", "mini cat": "mini cad",
     "mini-cad": "mini cad", "cadm": "cadam", "cad am": "cadam",
@@ -70,7 +70,7 @@ def _vocab() -> dict:
             pass
     for extra in ("tars", "basel", "obsidian", "cadam", "mini cad", "kipp",
                   "solax", "eufy", "steam", "brave", "telegram", "openscad",
-                  "jacob", "sophie", "emma", "luke"):
+                  "sophie", "emma", "luke"):
         add(extra)
     return words
 

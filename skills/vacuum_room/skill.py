@@ -6,13 +6,13 @@ BASE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BASE))
 
 DESCRIPTION = ("Send the eufy robot vacuum to clean ONE specific room by name, "
-               "e.g. 'clean the kitchen', 'vacuum the living room', 'do Jacob's "
+               "e.g. 'clean the kitchen', 'vacuum the living room', 'do the owner's "
                "room'. Say 'list rooms' or 'what rooms do you know' to hear the "
                "known room names. For a whole-house clean, pause/resume, or "
                "docking, use the vacuum skill instead.")
 ARGS = {"room": "the room name to clean, e.g. 'kitchen' or 'living room'; "
                 "or 'list' to just hear the known room names",
-        "override": "'true' ONLY if Jacob explicitly says to override quiet hours"}
+        "override": "'true' ONLY if the owner explicitly says to override quiet hours"}
 
 
 def run(args: dict) -> str:

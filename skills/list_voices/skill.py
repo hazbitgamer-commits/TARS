@@ -19,7 +19,7 @@ VOICE_MENU = ("the new local voices: George (British male, default), Fable, Lewi
               "plus the older internet voices: Ryan, Sonia, Guy, Jenny, William "
               "and Natasha")
 
-# voice id -> the friendly name Jacob knows it by
+# voice id -> the friendly name the owner knows it by
 _NAMES = {
     "bm_george": "George", "bm_fable": "Fable", "bm_lewis": "Lewis", "bm_daniel": "Daniel",
     "bf_emma": "Emma", "bf_isabella": "Isabella",

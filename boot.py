@@ -20,7 +20,7 @@ LAST_GOOD = BASE / "backups" / "last_good"
 
 # App mode (pythonw) has no terminal: stdout/stderr don't exist, and a bare
 # print() would crash the engine. Route everything to logs/console.log —
-# the same transcript Jacob used to copy out of the black window.
+# the same transcript the owner used to copy out of the black window.
 if sys.stdout is None or sys.stderr is None:
     log_path = BASE / "logs" / "console.log"
     try:

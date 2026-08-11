@@ -5,11 +5,19 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BASE))
 
-DESCRIPTION = ("Control the eufy robot vacuum: start a WHOLE-HOME clean (per-room "
-               "cleaning not supported yet), pause, resume, send it home to the dock, "
-               "or check the connection. E.g. 'start the vacuum', 'send the vacuum home'.")
+_NICK_FILE = BASE / "vacuum_nickname.txt"
+try:
+    _NICKNAME = _NICK_FILE.read_text(encoding="utf-8").strip() or "the vacuum"
+except FileNotFoundError:
+    _NICKNAME = "the vacuum"
+
+DESCRIPTION = (f"Control the eufy robot vacuum, which the owner has nicknamed {_NICKNAME} and "
+               "also refers to as 'he'/'him' (not to be confused with any other skill): "
+               "start a WHOLE-HOME clean (per-room cleaning not supported yet), pause, "
+               "resume, send it home to the dock, or check the connection. E.g. 'start the "
+               f"vacuum', 'send the vacuum home', 'send him home', 'is {_NICKNAME} charging'.")
 ARGS = {"action": "'clean', 'pause', 'resume', 'dock', or 'status'",
-        "override": "'true' ONLY if Jacob explicitly says to override quiet hours"}
+        "override": "'true' ONLY if the owner explicitly says to override quiet hours"}
 
 COMMANDS = {"clean": "start_auto", "start": "start_auto", "vacuum": "start_auto",
             "resume": "play", "pause": "pause", "stop": "pause",
