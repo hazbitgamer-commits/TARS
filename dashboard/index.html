@@ -302,9 +302,11 @@ tickClock(); setInterval(tickClock, 5000);
 
 /* ---------- status ring ---------- */
 const RING = {standby:"#5d7288", listening:"#3ddc97", thinking:"#ffb340",
-              speaking:"#46d4ff", asleep:"#a78bfa", offline:"#ff5d7a"};
+              speaking:"#46d4ff", asleep:"#a78bfa", offline:"#ff5d7a",
+              reconnecting:"#ffb340"};
 const WORD = {standby:"Standing by", listening:"Listening", thinking:"Thinking",
-              speaking:"Speaking", asleep:"Asleep", offline:"Offline"};
+              speaking:"Speaking", asleep:"Asleep", offline:"Offline",
+              reconnecting:"Reconnecting"};
 
 /* ---------- map ---------- */
 let map, markerLayer, lastMapT = -1, svActive = false;
@@ -358,10 +360,18 @@ setInterval(pollStreetView, 3000); pollStreetView();
 /* ---------- live state ---------- */
 const esc = t => t.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 let feedLen = -1, slidersBuilt = false;
+let missedPolls = 0;
 async function poll(){
   let s;
-  try{ s = await (await fetch("/api/state")).json(); }
-  catch(e){ setStatus("offline"); return; }
+  try{ s = await (await fetch("/api/state")).json(); missedPolls = 0; }
+  catch(e){
+    // ONE missed poll is not "the engine is off" — a restart, a sleeping
+    // tab or a busy moment all cause it, and the old code flashed OFFLINE
+    // every single time. Say "reconnecting" and only give up after three.
+    missedPolls++;
+    setStatus(missedPolls >= 3 ? "offline" : "reconnecting");
+    return;
+  }
   setStatus(s.status || "standby");
 
   const wm = (s.weather||"").match(/(-?\d+)\s*degrees?\s*and\s*([^.]+)/i);
@@ -413,6 +423,7 @@ function setStatus(st){
   document.getElementById("ring").style.setProperty("--ring-c", RING[st] || RING.standby);
   document.getElementById("statusWord").textContent = WORD[st] || st;
   document.getElementById("statusText").textContent = st === "listening" ? "listening" :
+    st === "reconnecting" ? "one moment" :
     st === "offline" ? "engine not answering" : 'say "hey tars"';
 }
 setInterval(poll, 2000); poll();

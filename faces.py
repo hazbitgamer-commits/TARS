@@ -25,6 +25,13 @@ DETECTOR = "yunet"        # opencv-5 wheels dropped the old haar files
 MATCH_THRESHOLD = 0.55    # cosine distance — lower is stricter
 MIN_FACE = 60             # px — ignore tiny background "faces"
 
+# "zoom in" — digital crop-and-enlarge on the webcam feed, for someone too
+# far away or too dim to make out ("I can't make out a face — more light,
+# or come closer"). Not owner data, so it lives at the root next to the
+# other *_state.json files rather than inside faces/.
+ZOOM_FILE = BASE / "camera_zoom.json"
+ZOOM_MIN, ZOOM_MAX, ZOOM_STEP = 1.0, 3.0, 0.5
+
 
 ready = False  # models loaded? the live feed won't wait for them
 
@@ -53,8 +60,55 @@ def _save_db(db: dict) -> None:
     DB_FILE.write_text(json.dumps(db, indent=1), encoding="utf-8")
 
 
+def _load_zoom() -> float:
+    try:
+        level = float(json.loads(ZOOM_FILE.read_text(encoding="utf-8")).get("level", ZOOM_MIN))
+    except (FileNotFoundError, json.JSONDecodeError, ValueError, TypeError):
+        return ZOOM_MIN
+    return max(ZOOM_MIN, min(ZOOM_MAX, level))
+
+
+def _save_zoom(level: float) -> None:
+    ZOOM_FILE.write_text(json.dumps({"level": level}), encoding="utf-8")
+
+
+def _apply_zoom(frame, level: float):
+    """Crop to the center 1/level of the frame and scale back up — a digital
+    zoom so a distant or dim face fills more of what the detector sees."""
+    if frame is None or level <= ZOOM_MIN:
+        return frame
+    import cv2
+
+    h, w = frame.shape[:2]
+    cw, ch = max(1, int(w / level)), max(1, int(h / level))
+    x0, y0 = (w - cw) // 2, (h - ch) // 2
+    cropped = frame[y0:y0 + ch, x0:x0 + cw]
+    return cv2.resize(cropped, (w, h), interpolation=cv2.INTER_LINEAR)
+
+
+def zoom_in() -> str:
+    level = round(min(ZOOM_MAX, _load_zoom() + ZOOM_STEP), 1)
+    _save_zoom(level)
+    if level >= ZOOM_MAX:
+        return f"Zoomed in to {level:g}x — that's as close as I can get digitally."
+    return f"Zoomed in to {level:g}x. Say zoom in again, or zoom out to back off."
+
+
+def zoom_out() -> str:
+    level = round(max(ZOOM_MIN, _load_zoom() - ZOOM_STEP), 1)
+    _save_zoom(level)
+    if level <= ZOOM_MIN:
+        return "Back to normal — no digital zoom."
+    return f"Zoomed out to {level:g}x."
+
+
+def zoom_reset() -> str:
+    _save_zoom(ZOOM_MIN)
+    return "Zoom reset — back to normal."
+
+
 def get_frame():
-    """A fresh camera frame (BGR array).
+    """A fresh camera frame (BGR array), digitally zoomed per zoom_in()/out().
 
     STREAM FIRST: if the live feed is running, use its latest frame and never
     touch the hardware — opening the device while the feed holds it kills the
@@ -62,12 +116,15 @@ def get_frame():
     """
     import cv2
 
+    zoom = _load_zoom()
+
     try:
         import dashboard
 
         t, jpg = dashboard.LATEST_JPEG
         if jpg and time.time() - t < 2:  # feed is live right now
-            return cv2.imdecode(np.frombuffer(jpg, np.uint8), cv2.IMREAD_COLOR)
+            frame = cv2.imdecode(np.frombuffer(jpg, np.uint8), cv2.IMREAD_COLOR)
+            return _apply_zoom(frame, zoom)
     except Exception:
         pass
     try:
@@ -80,7 +137,7 @@ def get_frame():
                 for _ in range(6):
                     ok, frame = cap.read()
             if ok:
-                return frame
+                return _apply_zoom(frame, zoom)
         finally:
             cap.release()
     except Exception:
