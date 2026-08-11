@@ -51,7 +51,60 @@ and talk.
 - Say "stop" to cut him off mid-sentence
 
 ## What does NOT work on Mac yet
-Opening apps, clicking the screen, reading the screen, camera and face
-recognition, PC volume/brightness, Steam, the vacuum and smart speakers,
-and self-modification. Those need his Windows body (or a future Mac port
-of each organ).
+Opening apps, clicking the screen, reading the screen, face recognition,
+brightness, Steam, the vacuum and smart speakers, and self-modification.
+Those need his Windows body (or a future Mac port of each organ).
+
+Hand signals and the camera HUD **do** work on Mac — they only need the
+webcam, not the heavy vision model.
+
+---
+
+# Repair kit
+
+## "It's stuck on an old version"
+
+The symptom: far fewer skills than the repo has, no setup page on first
+run, no box to type into on the dashboard. Older installers ran
+`git pull || true`, which silently did nothing whenever the update
+couldn't apply — so the install reported success and stayed stale.
+
+Paste this. It forces the code to match GitHub. Your details, logs and
+memories aren't tracked by git, so none of them are touched:
+
+```bash
+cd ~/TARS && \
+git remote set-url origin https://github.com/hazbitgamer-commits/TARS.git && \
+git fetch origin main && \
+git stash push -m pre-repair; \
+git checkout -B main origin/main && \
+echo "now on: $(git log --oneline -1)" && \
+echo "skills: $(ls skills | wc -l)"
+```
+
+Then bring the libraries and models up to date and start him:
+
+```bash
+cd ~/TARS && bash setup_mac.sh && bash tars_mac.sh
+```
+
+## Other quick fixes
+
+| Symptom | Fix |
+| --- | --- |
+| "Hey TARS" does nothing | Allow **Microphone** for Terminal in System Settings → Privacy & Security, then restart TARS |
+| He can't hear you, but the beep plays | `python3 doctor_mac.py` — it checks the mic and says what's wrong |
+| No voice, or a robotic one | The voice model didn't download: `bash setup_mac.sh` again |
+| "My local brain is offline" | Ollama isn't running: open the Ollama app, then restart TARS |
+| Camera or hand signals missing | `source .venv/bin/activate && pip install opencv-python mediapipe` |
+| Everything's odd after an update | `python3 doctor_mac.py`, then restart |
+
+## Checking your version
+
+```bash
+cd ~/TARS && git log --oneline -1 && ls skills | wc -l
+```
+
+TARS also checks for updates himself a few times a day and will say when
+there's one waiting. Ask him **"is there an update"** or tell him
+**"update yourself"** any time.
