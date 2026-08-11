@@ -1645,12 +1645,24 @@ class Brain:
                 return None
         except Exception:
             return None
-        owner = "the owner"
-        if name in self._POWER and who != owner:
+        # the owner's name comes from SETUP, not from a literal — this was
+        # briefly the string "the owner" after a bulk rename, which meant
+        # his own enrolled voice name matched nothing and he was
+        # refused every powerful skill on his own machine
+        try:
+            import profile
+
+            owner = (profile.owner() or "").strip()
+        except Exception:
+            owner = ""
+        if not owner or owner == "you":
+            return None  # nobody has said who they are yet — don't lock them out
+        same = who and who.strip().lower() == owner.lower()
+        if name in self._POWER and not same:
             return ("I need to be sure it's you before I do that. Say it "
                     "again, or type it on the dashboard.")
-        if name in self._PRIVATE and who not in (None, owner):
-            return f"That's the owner's to ask for, and you sound like {who}."
+        if name in self._PRIVATE and who is not None and not same:
+            return f"That's {owner}'s to ask for, and you sound like {who}."
         return None
 
     def _log_misfire(self, entry: dict, replace: bool = False) -> None:

@@ -687,7 +687,12 @@ class Handler(BaseHTTPRequestHandler):
                     main.log("heard", f"[typed] {text}")
                     global _LAST_TYPED_NORM
                     norm = text.lower().rstrip(".!? ")
-                    if norm and norm == _LAST_TYPED_NORM:
+                    # only a DOUBLE-SUBMIT is suspicious. With no time limit
+                    # it refused the same question asked hours apart — you
+                    # can't ask the time twice in one day.
+                    repeat = (norm and norm == (_LAST_TYPED_NORM or [None, 0])[0]
+                              and time.time() - _LAST_TYPED_NORM[1] < 30)
+                    if repeat:
                         # same exact message twice in a row — almost always
                         # means the first one didn't land, not a deliberate
                         # repeat. Same call main.py's voice loop makes.
@@ -695,10 +700,10 @@ class Handler(BaseHTTPRequestHandler):
                                  "it, or did you mean something else?")
                         _LAST_TYPED_NORM = None
                     else:
-                        _LAST_TYPED_NORM = norm
+                        _LAST_TYPED_NORM = (norm, time.time())
                         # typed on his own PC's localhost dashboard — that's
                         # him, and it must not inherit whoever spoke last
-                        BRAIN.speaker_name = "the owner"
+                        BRAIN.speaker_name = __import__("profile").owner()
                         reply = BRAIN.handle(text) or "..."
                     main.log("said", reply)
                     if data.get("speak") and SPEAKER is not None:

@@ -220,7 +220,7 @@ def _handle(chat_id: int, text: str) -> None:
     try:
         # this chat id is owner-locked, so a message here IS the owner — without
         # this it would inherit whoever last spoke at the mic
-        _brain.speaker_name = "the owner"
+        _brain.speaker_name = __import__("profile").owner()
         reply = _brain.handle(text) or "..."
     except Exception as e:
         reply = f"That went sideways on the PC: {e}"
