@@ -2517,6 +2517,63 @@ class Brain:
                     "check again?")
         return ""
 
+    # words too common to mean anything when comparing a command to a
+    # skill's example phrases
+    _ALT_STOPWORDS = frozenset(
+        "the a an to of is in on my me you your it this that for and or i".split())
+    # a real example phrase in quotes, e.g. 'open the CAD app' — the
+    # lookbehind/lookahead keep this from tripping on possessive
+    # apostrophes like "TARS's" or "owner's" sitting outside any quotes
+    _ALT_EXAMPLE_RE = re.compile(r"(?<=[\s(])'((?:[^'\n]|'(?=[a-z]))*?)'(?=[,.\s)]|$)")
+
+    @classmethod
+    def _alt_words(cls, s: str) -> set:
+        return {w for w in re.findall(r"[a-z']+", s.lower())
+                if w not in cls._ALT_STOPWORDS}
+
+    def suggest_alternatives(self, text: str, limit: int = 2) -> list[str]:
+        """When the owner repeats himself verbatim, TARS most likely didn't
+        recognise the phrasing rather than mishearing twice in a row. Pull
+        a couple of example phrases straight out of the real skill catalog
+        (never invented) that overlap with what he said, so he can find
+        the words TARS actually knows instead of repeating himself blind."""
+        try:
+            catalog = self.skills.catalog()
+        except Exception:
+            return []
+        qnorm = re.sub(r"[^\w\s]", "", text.lower()).strip()
+        words = self._alt_words(text)
+        if not words:
+            return []
+        scored, seen_skills = [], set()
+        for entry in catalog:
+            desc = entry.get("description") or ""
+            # drop everything from a "NOT for ..." clause onward — those are
+            # explicitly the WRONG skill for phrases like that, not a match
+            positive = re.split(r"\bNOT\b", desc)[0]
+            examples = [p for p in self._ALT_EXAMPLE_RE.findall(positive)
+                        if len(p.split()) >= 2]
+            if not examples:
+                continue
+            skill = entry.get("skill", "")
+            best, best_score = None, 0.0
+            for phrase in examples:
+                # he just said this exact phrase — repeating it back as a
+                # "suggestion" tells him nothing new
+                if re.sub(r"[^\w\s]", "", phrase.lower()).strip() == qnorm:
+                    continue
+                pwords = self._alt_words(phrase)
+                if not pwords:
+                    continue
+                overlap = len(words & pwords) / len(words | pwords)
+                if overlap > best_score:
+                    best_score, best = overlap, phrase
+            if best and best_score >= 0.5 and skill not in seen_skills:
+                scored.append((best_score, best))
+                seen_skills.add(skill)
+        scored.sort(key=lambda pair: -pair[0])
+        return [phrase for _, phrase in scored[:limit]]
+
     def _chat_messages(self, text: str) -> list[dict]:
         system = self._system_prompt()
         try:

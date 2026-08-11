@@ -523,8 +523,16 @@ def main() -> None:
                 if norm and norm == last_command_norm:
                     set_state("speaking")
                     stream.stop()
-                    speaker.say("That's the same thing again — did I miss "
-                                "it, or did you mean something else?")
+                    msg = ("That's the same thing again — did I miss "
+                           "it, or did you mean something else?")
+                    try:
+                        alts = brain.suggest_alternatives(text)
+                    except Exception:
+                        alts = []
+                    if alts:
+                        msg += (" Something close I do know: "
+                                + " or ".join(f'"{a}"' for a in alts) + ".")
+                    speaker.say(msg)
                     stream.start()
                     log("said", "(repeated command caught)")
                     convo.append("TARS: (repeated command caught)")
