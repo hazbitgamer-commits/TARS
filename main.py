@@ -309,7 +309,14 @@ def main() -> None:
     waker = make_wakeword(BASE)
 
     def open_mic():
-        device = audio_out.pick_input()  # pinned to the LifeCam, not the default
+        # pick_input now PROVES a device carries sound before returning it —
+        # his webcam mic spent a day delivering digital silence while
+        # everything looked healthy. Say out loud which ears are in use when
+        # they aren't the usual ones, so "he can't hear me" is never a mystery.
+        device = audio_out.pick_input()
+        open_mic.device = device          # remembered, so a deaf one can be dropped
+        name = audio_out.input_name(device)
+        print(f"(microphone: {name})")
         s = sd.RawInputStream(samplerate=SAMPLE_RATE, blocksize=FRAME_LEN,
                               channels=1, dtype="int16", device=device)
         s.start()
@@ -325,6 +332,7 @@ def main() -> None:
         print("Press Enter to talk. Ctrl+C to quit.")
 
     asleep = False
+    deaf_frames = 0  # consecutive silent frames — a dead mic tripwire
     try:
       while True:  # outer: survives the microphone vanishing mid-listen
        try:
@@ -341,6 +349,26 @@ def main() -> None:
                     pcm = agc.process(np.frombuffer(bytes(data), dtype=np.int16))
                     woke = waker.process(pcm)
                     frames_seen += 1
+                    # EARS HEARTBEAT — proof the listening loop is alive and
+                    # that sound is actually arriving. Without it, "he isn't
+                    # answering" is indistinguishable from "he isn't
+                    # listening", which is how a stale mic handle hid for
+                    # hours behind a healthy-looking dashboard.
+                    level = float(np.sqrt(np.mean(
+                        (pcm.astype(np.float32) / 32768.0) ** 2)))
+                    dashboard.EARS = (time.time(), level)
+                    # A DEAD-BUT-OPEN MIC is the worst failure he has: the
+                    # loop spins, the dashboard says "standing by", and he
+                    # hears nothing for hours. His LifeCam does this
+                    # intermittently. A real mic always has a noise floor,
+                    # so sustained digital silence means reopen it.
+                    if level < 2e-5:
+                        deaf_frames += 1
+                        if deaf_frames > 750:  # ~60 seconds of nothing
+                            raise sd.PortAudioError(
+                                "microphone went silent (dead endpoint)")
+                    else:
+                        deaf_frames = 0
                     if frames_seen % 12 == 0:  # roughly once a second
                         import announce
                         import agents
@@ -630,6 +658,12 @@ def main() -> None:
         # Windows shuffled the audio devices (a controller/headset connected,
         # driver restarted...) — reopen the mic instead of dying
         print(f"(microphone lost: {e} — reconnecting)")
+        if "went silent" in str(e):
+            # not unplugged — WORSE: open but deaf. Never pick it again
+            # this session, or the reconnect lands on the same dead device.
+            audio_out.mark_dead(getattr(open_mic, "device", None))
+            print(f"(dropping {audio_out.input_name(getattr(open_mic, 'device', None))}"
+                  f" — it was open but delivering silence)")
         set_state("offline")
         try:
             stream.abort()

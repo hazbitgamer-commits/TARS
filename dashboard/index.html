@@ -360,7 +360,7 @@ setInterval(pollStreetView, 3000); pollStreetView();
 /* ---------- live state ---------- */
 const esc = t => t.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 let feedLen = -1, slidersBuilt = false;
-let missedPolls = 0;
+let missedPolls = 0, lastUpdate = Date.now();
 async function poll(){
   let s;
   try{ s = await (await fetch("/api/state")).json(); missedPolls = 0; }
@@ -370,8 +370,15 @@ async function poll(){
     // every single time. Say "reconnecting" and only give up after three.
     missedPolls++;
     setStatus(missedPolls >= 3 ? "offline" : "reconnecting");
+    // A PAGE LEFT OPEN THROUGH A RESTART can end up wedged — stale scripts,
+    // a suspended tab, a dead connection — showing "offline" while the
+    // engine is perfectly fine. After ~30s of failures, reload itself:
+    // if the engine really is down the reload fails harmlessly and retries.
+    if(missedPolls === 15) location.reload();
     return;
   }
+  missedPolls = 0;
+  lastUpdate = Date.now();
   setStatus(s.status || "standby");
 
   const wm = (s.weather||"").match(/(-?\d+)\s*degrees?\s*and\s*([^.]+)/i);

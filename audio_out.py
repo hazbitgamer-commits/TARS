@@ -53,6 +53,20 @@ MIC_PREFER_MAC = ("macbook", "built-in", "internal")
 MIC_EXCLUDE_MAC = ("iphone", "ipad", "continuity")
 
 
+_DEAD_MICS: set = set()  # devices that went silent while TARS was using them
+
+
+def mark_dead(index) -> None:
+    """Don't come back to a mic that went deaf mid-session.
+
+    His LifeCam passes a quarter-second probe and then delivers digital
+    silence through the long-lived stream — so proving it at startup isn't
+    enough. When the listening loop notices sustained silence it calls
+    this, and the next pick skips that device entirely."""
+    if index is not None:
+        _DEAD_MICS.add(int(index))
+
+
 def pick_input() -> int | None:
     """The index of the mic TARS should use — pinned per platform, so a
     freshly connected DualSense (or a Continuity iPhone) can't hijack it."""
@@ -62,7 +76,7 @@ def pick_input() -> int | None:
     prefer = MIC_PREFER_MAC if on_mac_like else MIC_PREFER
     candidates = []
     for i, d in enumerate(sd.query_devices()):
-        if d["max_input_channels"] <= 0:
+        if d["max_input_channels"] <= 0 or i in _DEAD_MICS:
             continue
         if not on_mac_like and d["hostapi"] != 0:
             continue
@@ -72,10 +86,57 @@ def pick_input() -> int | None:
         if on_mac_like and any(j in low for j in MIC_EXCLUDE_MAC):
             continue
         if any(f in low for f in prefer):
-            return i
-        if "dualsense" not in low and "oculus" not in low:
+            candidates.insert(0, i)  # preferred, but still has to WORK
+        elif "dualsense" not in low and "oculus" not in low:
             candidates.append(i)
-    return candidates[0] if candidates else None
+    if not candidates:
+        return None
+    # A pinned mic that delivers SILENCE is worse than no mic: TARS sits
+    # there looking healthy, hearing nothing, for hours. His webcam mic did
+    # exactly that — fine to sd.rec(), digital silence through the stream
+    # TARS actually opens. So prove each candidate before trusting it.
+    working = [i for i in candidates[:6] if _delivers_audio(i)]
+    if working:
+        return working[0]
+    # LAST RESORT: nothing preferred is delivering. A gamepad headset is a
+    # daft microphone for a desk assistant, but being deaf is worse — take
+    # anything that actually carries sound. main() says which it chose.
+    for i, d in enumerate(sd.query_devices()):
+        if (d["max_input_channels"] > 0 and d["hostapi"] == 0
+                and i not in candidates and i not in _DEAD_MICS
+                and _delivers_audio(i)):
+            return i
+    return candidates[0]
+
+
+def input_name(index) -> str:
+    try:
+        return str(sd.query_devices()[index]["name"])[:40]
+    except Exception:
+        return "unknown microphone"
+
+
+def _delivers_audio(index: int, seconds: float = 0.25) -> bool:
+    """Open it the same way the listening loop does and see if anything
+    at all comes through. Digital silence = a dead endpoint."""
+    import numpy as np
+
+    try:
+        with sd.RawInputStream(samplerate=16000, blocksize=1280,
+                               dtype="int16", channels=1, device=index) as st:
+            peak = 0.0
+            for _ in range(max(2, int(seconds * 16000 / 1280))):
+                data, _ = st.read(1280)
+                pcm = np.frombuffer(bytes(data), dtype=np.int16)
+                peak = max(peak, float(np.max(np.abs(pcm))) / 32768.0)
+            # a live mic in a silent room still has a noise floor; a dead
+            # endpoint returns zeros or a single stuck LSB
+            # 1e-4 was too generous: his LifeCam returns a stuck
+            # low-order bit (9e-05) that passes as "audio" while being
+            # deaf. A real mic's room noise sits around 2e-3.
+            return peak > 5e-4
+    except Exception:
+        return False
 
 
 def apply_saved() -> None:

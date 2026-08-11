@@ -24,6 +24,9 @@ PORT = 8765
 
 state = {"status": "starting"}
 _cache: dict = {"skills": (0.0, []), "weather": (0.0, "")}
+EARS: tuple[float, float] = (0.0, 0.0)  # (when the listening loop
+# last ran, how loud it was) — set by main. Lets the dashboard say
+# whether he is ACTUALLY listening, not just running.
 LATEST_JPEG: tuple[float, bytes] = (0.0, b"")  # newest live-feed frame, shared
 # with the camera skill so "what do you see" works while the feed is open
 
@@ -214,6 +217,8 @@ def _payload() -> dict:
         "log": log_entries,
         "skills": _skills(),
         "brain": {"count": len(notes), "recent": recent},
+        "ears": {"ago": round(time.time() - EARS[0], 1) if EARS[0] else None,
+                 "level": round(EARS[1], 5)},
     }
 
 
