@@ -15,13 +15,18 @@ from pathlib import Path
 import requests
 
 OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
-MODEL = "qwen2.5:7b"        # conversation
+from platform_caps import chat_model as _chat_model
 from platform_caps import router_model as _router_model
+from platform_caps import tight_on_memory as _tight
 
+MODEL = _chat_model()  # conversation — drops to the 3B on a small machine,
+# where a 7B made the whole computer lag rather than just TARS
 ROUTER_MODEL = _router_model()  # Windows: separate instance (router and
 # chat each keep their own prompt cache — sharing doubled latency there).
 # Lite/Mac: the SAME instance — a second resident 7B swamped an M4.
-KEEP_ALIVE = "2h"  # keep models loaded in memory between commands
+# on a tight machine let the model fall out of memory between commands,
+# so TARS isn't holding gigabytes hostage while he's not being used
+KEEP_ALIVE = "10m" if _tight() else "2h"
 HISTORY_TURNS = 10  # remembered exchanges within a session
 
 

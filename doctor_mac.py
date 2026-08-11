@@ -85,6 +85,62 @@ def microphone():
     raise RuntimeError(f"could not record from mic '{name[:28]}' at any rate")
 
 
+def portaudio():
+    """sounddevice is a wrapper around PortAudio, which macOS doesn't ship.
+    Without it every audio import dies — which reads as "voice recognition
+    wouldn't install"."""
+    # test the SYMPTOM (does the audio library actually load?) rather than
+    # the cause — Windows bundles PortAudio differently and find_library
+    # returns nothing there even when audio works perfectly
+    try:
+        import sounddevice  # noqa: F401
+    except Exception as e:
+        import ctypes.util
+
+        if not ctypes.util.find_library("portaudio"):
+            raise RuntimeError(
+                "PortAudio is missing — TARS can't hear or speak without it. "
+                "Fix: brew install portaudio, then run setup_mac.sh again")
+        raise RuntimeError(f"the audio library won't load: {e}")
+    return "audio library loads"
+
+
+def memory_fit():
+    """A 7B model on an 8GB machine makes the WHOLE computer crawl."""
+    sys.path.insert(0, str(BASE))
+    import platform_caps as caps
+
+    gb = caps.total_ram_gb()
+    chat, router = caps.chat_model(), caps.router_model()
+    if caps.tight_on_memory():
+        return (f"{gb:.0f}GB RAM — using the small brain ({chat}) so the "
+                f"machine stays usable")
+    return f"{gb:.0f}GB RAM — chat {chat}, router {router}"
+
+
+def big_brain():
+    """The token is useless without the claude command it drives."""
+    import os
+    import shutil
+
+    from dotenv import load_dotenv
+
+    load_dotenv(BASE / ".env")
+    token = (os.getenv("CLAUDE_CODE_OAUTH_TOKEN") or "").strip()
+    key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    if not token and not key:
+        return "off (no key set — optional, everything else works)"
+    try:
+        import claude_agent_sdk  # noqa: F401
+    except ImportError:
+        raise RuntimeError("the Python SDK is missing — run setup_mac.sh again")
+    if token and not shutil.which("claude"):
+        raise RuntimeError("token is set but the `claude` command isn't "
+                           "installed, so big jobs can never run. Fix: "
+                           "npm install -g @anthropic-ai/claude-code")
+    return "ready"
+
+
 def speak_test():
     import sounddevice as sd
 
@@ -103,11 +159,14 @@ print("=" * 46)
 print("  TARS DOCTOR")
 print("=" * 46)
 print("(speak or clap during the mic test — ~8s)\n")
+check("Audio library (PortAudio)", portaudio)
+check("Memory vs model size", memory_fit)
 check("Ollama brain server + models", ollama)
 check("Wake word (Vosk)", vosk_model)
 check("Voice (Kokoro)", kokoro_files)
 check("Hearing (Whisper)", whisper_lib)
 check("Microphone", microphone)
+check("Big brain (optional)", big_brain)
 
 
 def beep_then_listen():

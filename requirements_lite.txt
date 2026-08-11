@@ -14,6 +14,11 @@ pyttsx3
 truststore
 soundfile
 
+# the self-teaching big brain. Installed by default because setup ASKS for
+# a Claude token, and "not installed even after putting in the token" is a
+# broken promise. It also needs the `claude` command itself — setup_mac.sh
+# installs that via npm and says so if it can't.
+claude-agent-sdk
+
 # optional extras — uncomment if wanted
-# claude-agent-sdk        # the self-teaching big brain (needs a Claude token)
 # python-telegram-bot     # not needed: the phone bridge uses plain requests

@@ -47,12 +47,49 @@ def blocked_skills() -> set:
 CHAT_MODEL = "qwen2.5:7b"
 
 
+def total_ram_gb() -> float:
+    """How much memory this machine actually has. Model choice was fixed at
+    7B + 3B for every Lite machine, which is fine on a 16GB M4 and grinds an
+    8GB Mac to a halt — reported as "lags out my computer" and "doesn't
+    respond every time"."""
+    try:
+        import psutil
+
+        return psutil.virtual_memory().total / (1024 ** 3)
+    except Exception:
+        pass
+    try:  # psutil missing: ask the OS directly
+        import subprocess
+
+        if IS_MAC:
+            out = subprocess.run(["sysctl", "-n", "hw.memsize"],
+                                 capture_output=True, text=True, timeout=5)
+            return int(out.stdout.strip()) / (1024 ** 3)
+        if IS_LINUX:
+            for line in Path("/proc/meminfo").read_text().splitlines():
+                if line.startswith("MemTotal"):
+                    return int(line.split()[1]) / (1024 ** 2)
+    except Exception:
+        pass
+    return 16.0  # unknown: assume roomy rather than cripple a good machine
+
+
+def tight_on_memory() -> bool:
+    """Under ~12GB there isn't room for a 7B model plus the OS plus a
+    browser, and everything else on the machine suffers."""
+    return LITE and total_ram_gb() < 12
+
+
+def chat_model() -> str:
+    return "qwen2.5:3b" if tight_on_memory() else CHAT_MODEL
+
+
 def bg_model() -> str:
     """Background-thinking model. Windows (16GB GPU) affords the smarter
     qwen3:8b as a third resident model; Lite machines (MacBook unified
     memory) reuse the ONE chat model — three residents at once swamped an
     M4 into system-wide lag."""
-    return CHAT_MODEL if LITE else "qwen3:8b"
+    return chat_model() if LITE else "qwen3:8b"
 
 
 def router_model() -> str:
@@ -60,7 +97,9 @@ def router_model() -> str:
     keep separate prompt caches (2x latency win there). Lite v2: a NIMBLE
     3B routes — the routing step is the felt latency on every command, and
     the deterministic hard gates catch what a small router fumbles.
-    (7B chat + 3B router ≈ 7.5GB resident — comfortable in 16GB.)"""
+    (7B chat + 3B router ≈ 7.5GB resident — comfortable in 16GB.)
+    On a tight machine chat is ALSO the 3B, so they share one model and
+    only ~2GB is resident in total."""
     return "qwen2.5:3b" if LITE else "qwen2.5:7b-router"
 
 
