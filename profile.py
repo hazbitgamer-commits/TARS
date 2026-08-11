@@ -1,0 +1,164 @@
+"""Who owns this copy of TARS.
+
+Everything personal lives here — name, city, school, logins — instead of
+being written into the code. The public repo therefore contains nobody's
+details, and each person's copy knows only about them.
+
+profile.json NEVER goes to GitHub (it's in .gitignore and excluded from
+the publish list). It IS included in the nightly backup, so a reinstall
+doesn't mean typing it all again, and updating TARS never touches it.
+"""
+import json
+import os
+from pathlib import Path
+
+BASE = Path(__file__).resolve().parent
+FILE = BASE / "profile.json"
+
+# what setup asks for. "secret" fields are masked in the dashboard until
+# the owner clicks reveal — they're his own details, on his own machine.
+FIELDS = [
+    {"key": "name", "label": "What should I call you?",
+     "hint": "First name is fine", "required": True},
+    {"key": "city", "label": "Which town or city?",
+     "hint": "For weather and sunset times", "required": True},
+    {"key": "school_portal", "label": "Does your school use SEQTA?",
+     "hint": "SEQTA connects automatically; anything else you can tell me "
+             "your timetable yourself", "choices": ["SEQTA", "Something else",
+                                                    "No school"]},
+    {"key": "seqta_url", "label": "Your school's portal address",
+     "hint": "The address you log into, e.g. learn.yourschool.wa.edu.au"},
+    {"key": "seqta_user", "label": "Portal username"},
+    {"key": "seqta_pass", "label": "Portal password", "secret": True,
+     "hint": "Stays on this computer — it's only ever sent to your school"},
+    {"key": "telegram_token", "label": "Telegram bot token", "secret": True,
+     "hint": "Optional — lets you text TARS from your phone. From @BotFather"},
+    {"key": "big_brain", "label": "Big jobs (self-teaching, building things)",
+     "choices": ["Claude", "ChatGPT", "Off"],
+     "hint": "Optional and paid, on your own account. Everyday talking is "
+             "always free and local."},
+    {"key": "big_brain_key", "label": "Your key for that", "secret": True,
+     "hint": "Claude: an OAuth token. ChatGPT: an API key starting sk-"},
+]
+SECRETS = {f["key"] for f in FIELDS if f.get("secret")}
+
+
+def load() -> dict:
+    try:
+        return json.loads(FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save(data: dict) -> None:
+    current = load()
+    for key, value in data.items():
+        # an empty box means "leave what's there", not "wipe it" — otherwise
+        # a masked password field would erase itself on every save
+        if value == "" and key in SECRETS and current.get(key):
+            continue
+        current[key] = value
+    current["set_up"] = True
+    FILE.write_text(json.dumps(current, indent=1), encoding="utf-8")
+    _mirror_to_env(current)
+
+
+def _mirror_to_env(data: dict) -> None:
+    """Keep .env in step, since seqta.py and tars_phone.py read from it and
+    from the environment. Written key by key so nothing else is disturbed."""
+    mapping = {"seqta_url": "SEQTA_URL", "seqta_user": "SEQTA_USER",
+               "seqta_pass": "SEQTA_PASS", "telegram_token":
+               "TELEGRAM_BOT_TOKEN", "city": "HOME_CITY"}
+    env = BASE / ".env"
+    try:
+        lines = env.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    for key, name in mapping.items():
+        value = str(data.get(key, "")).strip()
+        if not value:
+            continue
+        os.environ[name] = value
+        for i, line in enumerate(lines):
+            if line.strip().startswith(f"{name}="):
+                lines[i] = f"{name}={value}"
+                break
+        else:
+            lines.append(f"{name}={value}")
+    if data.get("big_brain_key"):
+        name = ("CLAUDE_CODE_OAUTH_TOKEN"
+                if data.get("big_brain") != "ChatGPT" else "OPENAI_API_KEY")
+        os.environ[name] = data["big_brain_key"]
+        for i, line in enumerate(lines):
+            if line.strip().startswith(f"{name}="):
+                lines[i] = f"{name}={data['big_brain_key']}"
+                break
+        else:
+            lines.append(f"{name}={data['big_brain_key']}")
+    try:
+        env.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def needs_setup() -> bool:
+    """First run ever. Updating TARS must never make this true again."""
+    return not load().get("set_up")
+
+
+def owner() -> str:
+    """The name TARS calls them. Falls back to something neutral rather
+    than anyone's actual name."""
+    return (load().get("name") or "").strip() or "you"
+
+
+def owner_or(default: str = "the owner") -> str:
+    return (load().get("name") or "").strip() or default
+
+
+def city() -> str:
+    return (load().get("city") or "").strip() or os.getenv("HOME_CITY", "Perth")
+
+
+def get(key: str, default: str = "") -> str:
+    return str(load().get(key, default) or default)
+
+
+def public_view() -> dict:
+    """What the setup page shows: everything, with secrets masked until
+    the owner asks to see them. He wanted to be able to read his own
+    details back — people forget school passwords."""
+    data = load()
+    out = {}
+    for field in FIELDS:
+        value = str(data.get(field["key"], "") or "")
+        if field.get("secret") and value:
+            out[field["key"]] = "•" * min(len(value), 12)
+        else:
+            out[field["key"]] = value
+    return out
+
+
+_OWNER_WORDS = ("the owner's", "The owner's", "the owner", "The owner")
+
+
+def personalise(text: str) -> str:
+    """Code says "the owner"; the person hears their own name.
+
+    The name was written into 419 places across 108 files, which is why
+    none of it could be published. It now lives in exactly one file, and
+    gets substituted on the way out — so the repo is nobody's, and each
+    copy is somebody's.
+    """
+    name = (load().get("name") or "").strip()
+    if not name or not text:
+        return text
+    return (text.replace("the owner's", f"{name}'s")
+                .replace("The owner's", f"{name}'s")
+                .replace("the owner", name)
+                .replace("The owner", name))
+
+
+def reveal() -> dict:
+    """The real values, for the owner's own eyes on his own machine."""
+    return {key: str(load().get(key, "") or "") for key in SECRETS}
