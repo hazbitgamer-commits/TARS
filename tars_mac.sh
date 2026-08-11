@@ -9,4 +9,10 @@ if [ "$1" = "--doctor" ]; then
   python3 doctor_mac.py        # plus the mic/speaker listening tests
   exit 0
 fi
+# "he doesn't answer" — walks mic -> wake word -> speech -> brain -> voice
+# and names the FIRST broken link, then writes voice_report.txt to send on
+if [ "$1" = "--voice" ] || [ "$1" = "--why" ]; then
+  python3 voice_check.py
+  exit $?
+fi
 python3 boot.py --window

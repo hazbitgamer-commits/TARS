@@ -62,6 +62,29 @@ webcam, not the heavy vision model.
 
 # Repair kit
 
+## "He doesn't answer me"
+
+Run this. It walks the whole chain — microphone, wake word, understanding
+speech, thinking, speaking — and stops at the **first** thing that's
+actually broken, with the command to fix it:
+
+```bash
+cd ~/TARS && bash tars_mac.sh --voice
+```
+
+It talks you through it (say something when it asks) and writes
+`voice_report.txt`. If you're still stuck, send that file — it says
+exactly where the chain breaks, so nobody has to guess.
+
+The three most common causes, in order:
+
+1. **Ollama isn't running.** It's the part that does the thinking. Open
+   the Ollama app and start TARS again.
+2. **macOS is blocking the microphone.** System Settings → Privacy &
+   Security → Microphone → turn on for Terminal, then restart TARS.
+3. **PortAudio is missing**, so nothing audio works at all:
+   `brew install portaudio && bash setup_mac.sh`
+
 ## "It's stuck on an old version"
 
 The symptom: far fewer skills than the repo has, no setup page on first
