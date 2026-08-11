@@ -53,7 +53,9 @@ def check(apply: bool = False) -> str:
         fetched = _git("fetch", "--quiet")
         if fetched.returncode != 0:
             return "I couldn't reach GitHub to check for updates."
-        behind = _git("rev-list", "--count", "HEAD..@{u}").stdout.strip()
+        # against origin/main explicitly: "@{u}" fails on a copy that isn't
+        # tracking a branch, which is exactly the state that goes stale
+        behind = _git("rev-list", "--count", "HEAD..origin/main").stdout.strip()
         count = int(behind or 0)
     except Exception:
         return "I couldn't work out whether there's an update."
@@ -65,8 +67,14 @@ def check(apply: bool = False) -> str:
     # local edits (a self-taught skill, say) must not be destroyed
     dirty = _git("status", "--porcelain").stdout.strip()
     if dirty:
-        _git("stash", "push", "-u", "-m", "tars-auto-update")
-    pulled = _git("pull", "--ff-only", "--quiet")
+        _git("stash", "push", "-m", "tars-auto-update")
+    pulled = _git("merge", "--ff-only", "origin/main")
+    if pulled.returncode != 0:
+        # a plain pull silently does nothing when the copy is on no branch
+        # or has diverged — an install sat months out of date "successfully".
+        # Force the code to match GitHub; personal files are untracked, so
+        # nothing of theirs is touched, and their edits are in the stash.
+        pulled = _git("checkout", "-B", "main", "origin/main")
     if dirty:
         _git("stash", "pop")
     if pulled.returncode != 0:

@@ -19,12 +19,31 @@ fi
 cd "$HOME"
 if [ -d "$HOME/TARS/.git" ]; then
   echo "-- updating existing TARS"
-  git -C "$HOME/TARS" pull --ff-only || true
+  cd "$HOME/TARS"
+  # This used to be `git pull --ff-only || true`, which SILENTLY did nothing
+  # when the pull couldn't fast-forward — an install sat months out of date
+  # reporting success. Now it forces the code to match GitHub and says what
+  # it ended up on. Personal files (profile.json, .env, logs, vault) are
+  # untracked, so none of this touches them.
+  git remote set-url origin https://github.com/hazbitgamer-commits/TARS.git
+  if ! git fetch --quiet origin main; then
+    echo "!! couldn't reach GitHub — check the internet, then run this again"
+  fi
+  if ! git merge --ff-only origin/main >/dev/null 2>&1; then
+    echo "-- local edits were in the way; saving them aside and taking the update"
+    git stash push --quiet -m "before-update-$(date +%s)" >/dev/null 2>&1 || true
+    git checkout -q -B main origin/main
+  fi
+  echo "-- now on: $(git log --oneline -1)"
+  echo "-- $(ls skills 2>/dev/null | wc -l | tr -d ' ') skills installed"
 else
   echo "-- downloading TARS"
-  git clone https://github.com/hazbitgamer-commits/TARS.git
+  rm -rf "$HOME/TARS.broken" 2>/dev/null || true
+  [ -e "$HOME/TARS" ] && mv "$HOME/TARS" "$HOME/TARS.broken"
+  git clone https://github.com/hazbitgamer-commits/TARS.git "$HOME/TARS"
+  cd "$HOME/TARS"
+  echo "-- $(ls skills 2>/dev/null | wc -l | tr -d ' ') skills installed"
 fi
-cd "$HOME/TARS"
 
 # 2. Ollama (the AI brain server)
 OLLAMA_BIN="$(command -v ollama || true)"
