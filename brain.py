@@ -316,6 +316,33 @@ class Brain:
                              {"role": "assistant", "content": result}]
             return result
 
+        # publishing and updating — "publish yourself", "any updates"
+        if re.search(r"\b(publish|push) (yourself|your code|your changes|"
+                     r"to github)\b|\bpublish now\b", lowered):
+            result = self.skills.run("publish", {"action": "publish"})
+            self.history += [{"role": "user", "content": text},
+                             {"role": "assistant", "content": result}]
+            self._journal(f"publish: {result[:100]}")
+            return result
+        if re.search(r"\b(update yourself|update your ?self|pull the (latest|"
+                     r"updates)|get the (latest|updates))\b", lowered):
+            result = self.skills.run("publish", {"action": "update"})
+            self.history += [{"role": "user", "content": text},
+                             {"role": "assistant", "content": result}]
+            return result
+        if re.search(r"\b(is there an update|any updates|are you up to date|"
+                     r"do you need updating)\b", lowered):
+            result = self.skills.run("publish", {"action": "check"})
+            self.history += [{"role": "user", "content": text},
+                             {"role": "assistant", "content": result}]
+            return result
+        if re.search(r"\b(stop|don'?t|turn off|disable) (publishing|auto "
+                     r"publish\w*)\b", lowered):
+            result = self.skills.run("publish", {"action": "auto_off"})
+            self.history += [{"role": "user", "content": text},
+                             {"role": "assistant", "content": result}]
+            return result
+
         # HAND SIGNALS. Sits with the camera gates because it opens the
         # webcam — and like them, only ever on words the owner actually said.
         # while the camera IS watching, a bare "stop watching" must reach it.

@@ -361,6 +361,11 @@ def main() -> None:
                         import downloads_watch
 
                         downloads_watch.tick()  # files finished downloads away
+                        import publish_watch
+                        import updater
+
+                        publish_watch.tick()  # push improvements out on their own
+                        updater.tick()        # and notice when there are some to take
                         proactive.tick()   # calendar heads-ups, rules-gated
                         for announcement in timers_watch.pop_due() + announce.pop():
                             print(f"TARS: {announcement}")
