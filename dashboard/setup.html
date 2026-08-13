@@ -102,6 +102,12 @@ button.ghost{background:none;border-color:var(--edge);color:var(--dim)}
       <input id="twilio_token" type="password" autocomplete="new-password"></label>
     <label><div class="q">Your Twilio phone number</div>
       <input id="twilio_number" placeholder="+61..." autocomplete="off"></label>
+    <label><div class="q">Show MY number when he calls people</div>
+      <div class="hint">Twilio has to verify you own it first — their console:
+        Phone Numbers → Verified Caller IDs → Add. They ring or text you a code.</div>
+      <select id="caller_id_mine"><option>No</option><option>Yes</option></select></label>
+    <button type="button" id="callerBtn">Check my caller ID</button>
+    <div class="note" id="callerOut"></div>
     <div class="note">He always asks before dialling, says he's an assistant,
       and can never call emergency numbers.</div>
   </div>
@@ -115,7 +121,7 @@ button.ghost{background:none;border-color:var(--edge);color:var(--dim)}
 <script>
 const F = ["name","city","school_portal","seqta_url","seqta_user","seqta_pass",
            "telegram_token","big_brain","big_brain_key","mobile","eleven_key",
-           "twilio_sid","twilio_token","twilio_number"];
+           "twilio_sid","twilio_token","twilio_number","caller_id_mine"];
 const el = id => document.getElementById(id);
 
 function toggles(){
@@ -147,6 +153,16 @@ el("testBtn").addEventListener("click", async () => {
   const s = await r.json();
   el("testOut").textContent = s.message || "No answer.";
   el("testOut").className = "note" + (s.ok ? " ok" : "");
+});
+
+el("callerBtn").addEventListener("click", async () => {
+  el("callerOut").textContent = "Asking Twilio…";
+  const body = {}; F.forEach(k => body[k] = el(k).value);
+  const r = await fetch("/api/setup/caller", {method:"POST",
+    headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+  const s = await r.json();
+  el("callerOut").textContent = s.message || "No answer.";
+  el("callerOut").className = "note" + (s.ok ? " ok" : "");
 });
 
 el("save").addEventListener("click", async () => {

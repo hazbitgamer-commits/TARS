@@ -48,7 +48,12 @@ FIELDS = [
      "hint": "Optional — only needed for real phone calls"},
     {"key": "twilio_token", "label": "Twilio auth token", "secret": True},
     {"key": "twilio_number", "label": "Your Twilio phone number",
-     "hint": "The number he calls FROM, e.g. +61..."},
+     "hint": "The number he calls FROM, e.g. +61... (not needed if you use "
+             "your own number below)"},
+    {"key": "caller_id_mine", "label": "Show MY number when he calls people",
+     "choices": ["No", "Yes"],
+     "hint": "Twilio must verify you own it first — Verified Caller IDs in "
+             "their console. Then people see your mobile, not a strange number."},
 ]
 SECRETS = {f["key"] for f in FIELDS if f.get("secret")}
 

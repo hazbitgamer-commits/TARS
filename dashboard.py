@@ -783,6 +783,18 @@ class Handler(BaseHTTPRequestHandler):
                 # passwords, and he asked to be able to read them back
                 self._send(200, json.dumps(profile.reveal()).encode(),
                            "application/json")
+            elif self.path == "/api/setup/caller":
+                import profile as _pf
+
+                _pf.save(data)  # so the check uses what he just typed
+                try:
+                    import phone_call
+
+                    ok, message = phone_call.caller_id_verified()
+                except Exception as e:
+                    ok, message = False, f"Couldn't check: {e}"
+                self._send(200, json.dumps({"ok": ok, "message": message}
+                                           ).encode(), "application/json")
             elif self.path == "/api/setup/test":
                 self._send(200, json.dumps(_test_portal(data)).encode(),
                            "application/json")

@@ -32,12 +32,71 @@ MAX_CALLS_PER_DAY = 20
 
 
 def configured() -> tuple[bool, str]:
-    missing = [n for n in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN",
-                           "TWILIO_NUMBER") if not (os.getenv(n) or "").strip()]
+    missing = [n for n in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN")
+               if not (os.getenv(n) or "").strip()]
     if missing:
-        return False, ("Calling isn't set up yet — I need a Twilio account "
-                       "(number, SID and token) in the setup page first.")
+        return False, ("Calling isn't set up yet — I need your Twilio SID "
+                       "and token in the setup page first.")
+    if not caller_id():
+        return False, ("I don't know what number to call from. Put either a "
+                       "Twilio number or your own mobile in setup.")
     return True, ""
+
+
+def caller_id() -> str:
+    """The number people SEE when he rings them.
+
+    He wants his own mobile, so a barber sees a familiar number instead of
+    a strange one. Twilio allows this only for a **Verified Caller ID** —
+    a number you've proved you own, by answering a code. That's the honest
+    version of the feature; setting it to a number you don't own would be
+    spoofing, which is illegal and which Twilio blocks anyway.
+    """
+    try:
+        import profile
+
+        mine = normalise(profile.get("mobile", ""))
+        use_mine = str(profile.get("caller_id_mine", "")).lower() in (
+            "yes", "true", "1", "on")
+    except Exception:
+        mine, use_mine = "", False
+    if use_mine and mine:
+        return mine
+    return normalise(os.getenv("TWILIO_NUMBER", ""))
+
+
+def caller_id_verified() -> tuple[bool, str]:
+    """Ask Twilio whether that number is actually verified on his account.
+    Better to say so up front than to have every call fail at dial time."""
+    sid = (os.getenv("TWILIO_ACCOUNT_SID") or "").strip()
+    token = (os.getenv("TWILIO_AUTH_TOKEN") or "").strip()
+    number = caller_id()
+    if not (sid and token and number):
+        return False, "Calling isn't set up yet."
+    try:
+        import requests
+
+        r = requests.get(
+            f"https://api.twilio.com/2010-04-01/Accounts/{sid}"
+            f"/OutgoingCallerIds.json?PhoneNumber={number}",
+            auth=(sid, token), timeout=20)
+        if r.status_code != 200:
+            return False, "Twilio wouldn't answer — check the SID and token."
+        if r.json().get("outgoing_caller_ids"):
+            return True, f"{number} is verified — that's what people will see."
+        # it might be a Twilio number he owns, which needs no verification
+        owned = requests.get(
+            f"https://api.twilio.com/2010-04-01/Accounts/{sid}"
+            f"/IncomingPhoneNumbers.json?PhoneNumber={number}",
+            auth=(sid, token), timeout=20)
+        if owned.status_code == 200 and owned.json().get("incoming_phone_numbers"):
+            return True, f"{number} is your Twilio number — good to go."
+        return False, (f"{number} isn't verified with Twilio yet, so calls "
+                       f"from it will be refused. In the Twilio console: "
+                       f"Phone Numbers → Verified Caller IDs → Add. They'll "
+                       f"ring or text you a code.")
+    except Exception as e:
+        return False, f"Couldn't check with Twilio ({type(e).__name__})."
 
 
 def normalise(number: str) -> str:
@@ -146,7 +205,7 @@ def place(number: str, mode: str = "bridge", message: str = "",
 
     sid = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
     token = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
-    from_number = normalise(os.getenv("TWILIO_NUMBER", ""))
+    from_number = caller_id()  # his own mobile if verified
     try:
         import profile
 
