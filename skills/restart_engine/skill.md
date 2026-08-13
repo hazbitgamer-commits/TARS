@@ -10,6 +10,13 @@ close and reopen dashboard." This is a full self-restart, not a shutdown.
 - "restart TARS"
 
 ## What it does
+0. If a restart was already kicked off in the last 25 seconds, it does NOT
+   restart again — it asks "I just kicked off a restart — say yes if you
+   want me to do it again." This is for the case where "restart yourself"
+   gets said twice in a row because the first one looked like it failed
+   (no reply heard yet, dashboard hasn't reopened). Saying yes runs the
+   real restart; anything else cancels. A fresh ask more than 25 seconds
+   after the last one runs immediately, same as always.
 1. Closes TARS's own dashboard/brain/camera-feed windows (chromeless app
    windows whose title starts with "TARS").
 2. Replies "Restarting my engine now. I'll be back in a few seconds."

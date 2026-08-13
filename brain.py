@@ -1598,6 +1598,9 @@ class Brain:
                     elif target == "open_dashboard":  # repeat-open guard
                         self.pending_delete = ("open_dashboard",
                                                {"confirmed": "true"})
+                    elif target == "restart_engine":  # repeat-restart guard
+                        self.pending_delete = ("restart_engine",
+                                               {"confirmed": "true"})
                     elif target.startswith("face_forget:"):  # repeat-forget guard
                         self.pending_delete = ("face_forget", {
                             "name": target[len("face_forget:"):],

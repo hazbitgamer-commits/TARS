@@ -63,6 +63,17 @@ So: **Start → Power → Sleep**, not Shut Down.
 
 ## Setup
 
+### 0. On the PC, once: let the doorbell see him
+
+In the `tars` folder, **right-click `allow_doorbell.bat` → Run as
+administrator**, then press `A`.
+
+Windows blocks all incoming network connections by default, so without this
+the phone can't tell whether TARS is awake. The rule opens exactly one port
+(8767), only to devices on your own home network, and all that port can say
+is the word "TARS". The dashboard — camera, shutdown, school password —
+stays locked to the PC itself and is not opened.
+
 ### 1. Install Termux on the phone
 
 Get it from **F-Droid**, not the Play Store — the Play Store copy is
@@ -76,7 +87,7 @@ abandoned and won't install packages.
 Open Termux and type these two lines:
 
 ```bash
-pkg install python -y
+pkg install python curl -y
 curl -O https://raw.githubusercontent.com/hazbitgamer-commits/TARS/main/doorbell.py
 ```
 
@@ -120,6 +131,9 @@ Then leave it running and put the phone on the charger, on WiFi.
 
 If the PC doesn't wake, it's almost always one of these:
 
+- **You skipped step 0.** Without the firewall rule the doorbell can't see
+  that TARS is awake, so it fires a wake packet at every message and says
+  "waking him up" even when he's already on.
 - **The phone isn't on the same WiFi as the PC.** Magic packets don't leave
   your home network — that's why the doorbell has to be at home, and why it
   works when *you're* anywhere in the world.

@@ -15,6 +15,7 @@ then hands off to a small detached helper script (_do_restart.py) that:
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parents[2]  # the tars folder, wherever it is
@@ -25,7 +26,12 @@ DESCRIPTION = ("Fully restart TARS: close the dashboard window, restart the engi
                "E.g. 'restart yourself', 'restart your engine', 'reboot yourself'. "
                "NOT for shutting down for good (say 'goodbye TARS' for that) and "
                "NOT for just closing one window (that's close_window).")
-ARGS = {}
+ARGS = {"confirmed": "leave empty — the brain sets 'true' only after the owner says yes"}
+
+REPEAT_WINDOW = 25  # seconds — a second "restart yourself" this soon is probably
+# the owner repeating the command because the first one looked like it failed
+# (no reply heard yet, dashboard hasn't reopened), not a fresh intentional ask
+_last_restart = 0.0
 
 
 def _close_dashboard_windows() -> int:
@@ -48,6 +54,14 @@ def _close_dashboard_windows() -> int:
 
 
 def run(args: dict) -> str:
+    global _last_restart
+
+    now = time.time()
+    if (str(args.get("confirmed", "")).lower() != "true"
+            and now - _last_restart < REPEAT_WINDOW):
+        return ("__CONFIRM__restart_engine__I just kicked off a restart — say yes "
+                 "if you want me to do it again.")
+
     pid = os.getpid()
     _close_dashboard_windows()
 
@@ -61,4 +75,5 @@ def run(args: dict) -> str:
     except Exception as e:
         return f"I couldn't kick off the restart: {e}"
 
+    _last_restart = now
     return "Restarting my engine now. I'll be back in a few seconds."

@@ -281,6 +281,10 @@ def main() -> None:
     import tars_phone
 
     tars_phone.start(brain)  # no-op until a Telegram token is in .env
+    import heartbeat
+
+    heartbeat.start()  # lets the doorbell phone see he's awake. Says only
+    # "TARS" to anyone on the home WiFi — the dashboard stays on localhost.
     # after a healthy minute of uptime, this running set of core files is
     # proven bootable — snapshot it so boot.py can roll back a bad Kipp
     # self-upgrade that breaks start-up

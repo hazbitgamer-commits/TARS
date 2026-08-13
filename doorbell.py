@@ -41,6 +41,7 @@ CHECK_EVERY = 20        # seconds between "is the PC up?" checks
 PEEK_TIMEOUT = 30       # long-poll: a text wakes us within a second
 WAKE_WAIT = 180         # how long to give the PC to come up
 WOL_PORT = 9
+PULSE_PORT = 8767       # TARS's heartbeat — see heartbeat.py on the PC
 
 
 def ask_setup() -> dict:
@@ -74,15 +75,73 @@ def load() -> dict:
 CFG = load()
 
 
-def pc_awake() -> bool:
-    """TARS's own dashboard answering means the PC is up AND he's running —
-    a ping would only prove the machine had power."""
+def answers_at(ip: str, timeout: float = 4.0) -> bool:
+    """Ask TARS's heartbeat (port 8767) whether he's alive.
+
+    NOT his dashboard on 8765 — that one is bound to the PC itself on
+    purpose, because it can open the camera and reveal the school password.
+    The heartbeat is a separate listener that can only say the word "TARS".
+
+    A plain ping would be no good either: it proves the machine has power,
+    not that TARS came back with it.
+    """
     try:
-        urllib.request.urlopen(
-            f"http://{CFG['pc_ip']}:8765/api/state", timeout=4)
-        return True
+        with urllib.request.urlopen(f"http://{ip}:{PULSE_PORT}/",
+                                    timeout=timeout) as r:
+            return r.read(16).strip() == b"TARS"
     except Exception:
         return False
+
+
+def pc_awake() -> bool:
+    return answers_at(CFG["pc_ip"])
+
+
+def relocate() -> bool:
+    """Find the PC again after its address changed.
+
+    Home routers hand out addresses on a lease — his is four hours, and the
+    PC is asleep for longer than that most school days. When the lease
+    lapses the router can give that address to a phone or a TV, and a
+    doorbell pinned to one number would sit there watching the wrong
+    device forever, insisting TARS was dead.
+
+    So: sweep the network for whatever is actually answering as TARS, and
+    remember it. Only ever runs when the known address has gone quiet.
+    """
+    import threading
+
+    prefix = ".".join(CFG["pc_ip"].split(".")[:3])
+    found = []
+
+    def probe(n: int) -> None:
+        ip = f"{prefix}.{n}"
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.4)
+        try:
+            if s.connect_ex((ip, PULSE_PORT)) == 0 and answers_at(ip, 2.0):
+                found.append(ip)
+        except OSError:
+            pass
+        finally:
+            s.close()
+
+    workers = [threading.Thread(target=probe, args=(n,), daemon=True)
+               for n in range(1, 255)]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join(timeout=6)
+
+    if not found:
+        return False
+    CFG["pc_ip"] = found[0]
+    try:
+        CONFIG.write_text(json.dumps(CFG, indent=1), encoding="utf-8")
+    except OSError:
+        pass
+    print(f"(PC moved to {found[0]} — remembered)")
+    return True
 
 
 def wake_pc() -> None:
@@ -153,10 +212,18 @@ def main() -> None:
             wake_pc()
 
             deadline = time.time() + WAKE_WAIT
+            searched = False
             while time.time() < deadline:
                 time.sleep(5)
                 if pc_awake():
                     break
+                # half the wait gone and still nothing at the address we
+                # know — the router may have moved him. Look properly
+                # before telling him his PC is dead.
+                if not searched and time.time() > deadline - WAKE_WAIT / 2:
+                    searched = True
+                    if relocate():
+                        break
             if not pc_awake():
                 say(chat_id, "He didn't wake up. The PC might be unplugged, "
                              "or off at the wall.")
