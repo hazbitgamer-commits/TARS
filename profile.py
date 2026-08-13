@@ -22,6 +22,9 @@ FIELDS = [
      "hint": "First name is fine", "required": True},
     {"key": "city", "label": "Which town or city?",
      "hint": "For weather and sunset times", "required": True},
+    {"key": "email", "label": "Your email address",
+     "hint": "Used when he fills in a signup form for you. Not a secret, "
+             "so it stays readable in your profile"},
     {"key": "school_portal", "label": "Does your school use SEQTA?",
      "hint": "SEQTA connects automatically; anything else you can tell me "
              "your timetable yourself", "choices": ["SEQTA", "Something else",
