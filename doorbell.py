@@ -1,0 +1,174 @@
+"""TARS's doorbell — runs on an old Android phone, not the PC.
+
+The problem: TARS's brain is a 7B model living in the PC's RAM. PC off, no
+TARS. The fix isn't to shrink him — it's to give him a doorbell that's awake
+when he isn't, and let it wake the machine.
+
+An old phone on a charger draws about 2 watts. It sits on the home WiFi and
+does almost nothing:
+
+    is the PC's TARS answering on the network?
+      yes -> sleep. The PC owns the conversation; stay out of the way.
+      no  -> has he texted? Then send a magic packet to wake the PC, tell
+             him it's coming, and go quiet again.
+
+THE IMPORTANT TRICK: this never *consumes* the Telegram message. Telegram
+only counts an update as delivered once you ask for the one after it, so the
+doorbell peeks without confirming, and the real TARS receives that same
+message himself the moment he's awake — with his full brain, memory and all
+110 skills. Nothing is forwarded, nothing is lost, and there's no second
+half-witted TARS living on a phone giving worse answers.
+
+It also means the PC's dashboard stays bound to localhost. Opening it to the
+network would have exposed /api/setup/reveal — his school password — to
+anyone on the WiFi.
+
+Setup: see PHONE_DOORBELL.md. First run asks four questions and remembers.
+
+    python doorbell.py
+"""
+import json
+import socket
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+BASE = Path(__file__).resolve().parent
+CONFIG = BASE / "doorbell.json"
+
+CHECK_EVERY = 20        # seconds between "is the PC up?" checks
+PEEK_TIMEOUT = 30       # long-poll: a text wakes us within a second
+WAKE_WAIT = 180         # how long to give the PC to come up
+WOL_PORT = 9
+
+
+def ask_setup() -> dict:
+    """Four questions, once. Everything it needs is on the PC's dashboard
+    or in the same .env the PC uses."""
+    print("TARS doorbell — first-time setup.\n")
+    cfg = {}
+    cfg["token"] = input(
+        "Telegram bot token (the same one the PC uses): ").strip()
+    cfg["mac"] = input(
+        "PC's ethernet address, e.g. 9C-6B-00-E3-8B-50: ").strip()
+    cfg["pc_ip"] = input(
+        "PC's address on your home network, e.g. 192.168.4.45: ").strip()
+    guess = ".".join(cfg["pc_ip"].split(".")[:3]) + ".255" if \
+        cfg["pc_ip"].count(".") == 3 else "255.255.255.255"
+    broadcast = input(f"Broadcast address [{guess}]: ").strip() or guess
+    cfg["broadcast"] = broadcast
+    CONFIG.write_text(json.dumps(cfg, indent=1), encoding="utf-8")
+    print(f"\nSaved to {CONFIG}. Leave this running and put the phone on "
+          f"the charger.\n")
+    return cfg
+
+
+def load() -> dict:
+    try:
+        return json.loads(CONFIG.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ask_setup()
+
+
+CFG = load()
+
+
+def pc_awake() -> bool:
+    """TARS's own dashboard answering means the PC is up AND he's running —
+    a ping would only prove the machine had power."""
+    try:
+        urllib.request.urlopen(
+            f"http://{CFG['pc_ip']}:8765/api/state", timeout=4)
+        return True
+    except Exception:
+        return False
+
+
+def wake_pc() -> None:
+    """The magic packet: six 0xFF bytes, then the MAC sixteen times. Sent to
+    the broadcast address because a sleeping PC has no IP to aim at."""
+    mac = CFG["mac"].replace("-", "").replace(":", "").strip()
+    packet = b"\xff" * 6 + bytes.fromhex(mac) * 16
+    for target in (CFG.get("broadcast", "255.255.255.255"), "255.255.255.255"):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            s.sendto(packet, (target, WOL_PORT))
+            s.close()
+        except OSError:
+            pass
+
+
+def tg(method: str, timeout: int = 20, **params):
+    url = f"https://api.telegram.org/bot{CFG['token']}/{method}"
+    data = json.dumps(params).encode()
+    req = urllib.request.Request(
+        url, data=data, headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read())
+    except Exception:
+        return {}
+
+
+def peek() -> list:
+    """Look at waiting messages WITHOUT confirming them.
+
+    Telegram only marks updates delivered when you ask for the one after
+    them. Never pass an offset here — that would eat the message and the
+    real TARS would never see what he was asked.
+    """
+    return tg("getUpdates", timeout=PEEK_TIMEOUT + 10).get("result", [])
+
+
+def say(chat_id: int, text: str) -> None:
+    tg("sendMessage", chat_id=chat_id, text=text)
+
+
+def main() -> None:
+    print("Doorbell listening. PC:", CFG["pc_ip"], "MAC:", CFG["mac"])
+    handled = 0        # last update we've already acted on, so a PC that
+    # refuses to wake doesn't get a fresh "waking him up!" every 30 seconds
+    while True:
+        try:
+            if pc_awake():
+                time.sleep(CHECK_EVERY)
+                continue
+
+            waiting = peek()
+            fresh = [u for u in waiting if u.get("update_id", 0) > handled
+                     and (u.get("message") or {}).get("chat")]
+            if not fresh:
+                time.sleep(5)
+                continue
+
+            handled = max(u["update_id"] for u in fresh)
+            chat_id = (fresh[-1]["message"]["chat"] or {}).get("id")
+            if not chat_id:
+                continue
+
+            say(chat_id, "PC's asleep — I'm waking him now. Give me a minute, "
+                         "then he'll answer this himself.")
+            wake_pc()
+
+            deadline = time.time() + WAKE_WAIT
+            while time.time() < deadline:
+                time.sleep(5)
+                if pc_awake():
+                    break
+            if not pc_awake():
+                say(chat_id, "He didn't wake up. The PC might be unplugged, "
+                             "or off at the wall.")
+            # if he DID wake: say nothing. His own Telegram bridge picks up
+            # the message we deliberately left unread and answers it properly.
+        except KeyboardInterrupt:
+            print("\nDoorbell stopped.")
+            return
+        except Exception as e:
+            print(f"(doorbell hiccup: {type(e).__name__}) — carrying on")
+            time.sleep(15)
+
+
+if __name__ == "__main__":
+    main()
