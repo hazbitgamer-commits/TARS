@@ -1,4 +1,6 @@
 """Speech-to-text via faster-whisper, CPU int8 (AMD GPU = no CUDA here)."""
+import threading
+
 import numpy as np
 from faster_whisper import WhisperModel
 
@@ -10,6 +12,10 @@ class Transcriber:
         print(f"Loading whisper '{model_size}' model...")
         self.model = WhisperModel(model_size, device="cpu", compute_type="int8")
         self.last_confidence = 0.0  # mean log-probability of the kept segments
+        # the mic loop isn't the only caller any more — a voice note texted
+        # from the phone lands on the Telegram thread. One model, one at a
+        # time, rather than a second 500MB copy in RAM.
+        self._lock = threading.Lock()
         # warm up: the first inference carries one-off setup cost
         self.transcribe(np.zeros(SAMPLE_WARMUP, dtype=np.float32))
 
@@ -18,7 +24,14 @@ class Transcriber:
                  "like and subscribe", "see you in the next", "captions by",
                  "transcription by", "subtitles by", "copyright ©")
 
-    def transcribe(self, audio_16k_f32: np.ndarray) -> str:
+    def transcribe(self, audio_16k_f32) -> str:
+        """Audio in, words out. Takes either raw 16k float32 from the mic or
+        a path to an audio file — a voice note off the phone arrives as an
+        .oga, which faster-whisper decodes itself."""
+        with self._lock:
+            return self._transcribe(audio_16k_f32)
+
+    def _transcribe(self, audio_16k_f32) -> str:
         segments, _ = self.model.transcribe(
             audio_16k_f32, language="en", beam_size=2, vad_filter=True,
             condition_on_previous_text=False,

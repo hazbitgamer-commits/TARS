@@ -53,6 +53,7 @@ END_WORDS = ("that's all", "thats all", "that is all", "that's it", "thats it",
              "thank you tars")
 LAST_AUDIO = None      # the last recorded command — voice_id learns from it
 LAST_SPEAKER = None    # who TARS thinks is talking (None = unknown/guest)
+TRANSCRIBER = None     # the one whisper model, shared with the phone bridge
 SLEEP_WORDS = ("go to sleep", "sleep mode", "go quiet")
 WAKE_UP_WORDS = ("wake up", "i'm back", "wakey")
 SHUTDOWN_WORDS = ("goodbye tars", "goodbye, tars", "shut down tars", "tars shut down",
@@ -259,6 +260,9 @@ def main() -> None:
         dashboard.set_status(s)
     speaker = Speaker()
     transcriber = Transcriber()
+    global TRANSCRIBER
+    TRANSCRIBER = transcriber  # so a voice note off the phone can use the
+    # same whisper model instead of loading a second one into RAM
     brain = Brain(BASE)
     dashboard.BRAIN = brain      # the dashboard's Teach + Talk boxes
     import gestures
