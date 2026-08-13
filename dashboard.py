@@ -711,6 +711,12 @@ class Handler(BaseHTTPRequestHandler):
                         BRAIN.speaker_name = __import__("profile").owner()
                         reply = BRAIN.handle(text) or "..."
                     main.log("said", reply)
+                    try:  # and don't print it on the page either
+                        import secrets_store
+
+                        reply = secrets_store.redact(reply)
+                    except Exception:
+                        pass
                     if data.get("speak") and SPEAKER is not None:
                         # flag the status while it talks — the camera HUD's
                         # speaking cue reads this, and only the VOICE loop

@@ -80,6 +80,12 @@ def vault_conversation_line(day: str, hhmm: str, kind: str, text: str) -> None:
 
 
 def log(kind: str, text: str) -> None:
+    try:  # logs are kept forever and read by the big brain — no passwords
+        import secrets_store
+
+        text = secrets_store.redact(text)
+    except Exception:
+        pass
     now = datetime.datetime.now()
     day = datetime.date.today().isoformat()
     line = json.dumps(

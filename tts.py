@@ -33,6 +33,12 @@ _load_saved()
 
 def _prep(text: str) -> str:
     """Smooth mode: remove the punctuation that makes the voice pause."""
+    try:  # a password must never be readable out loud, whatever asked for it
+        import secrets_store
+
+        text = secrets_store.redact(text)
+    except Exception:
+        pass
     if not SMOOTH:
         return text
     t = text.replace(" — ", " ").replace("—", " ").replace(";", "")

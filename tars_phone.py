@@ -106,6 +106,12 @@ def send(text: str, force: bool = False) -> None:
         return
     if not force and not _state().get("notify", False):
         return
+    try:  # Telegram leaves the house entirely — last chance to catch one
+        import secrets_store
+
+        text = secrets_store.redact(text)
+    except Exception:
+        pass
     try:
         for chunk in [text[i:i + 3800] for i in range(0, len(text), 3800)]:
             _api("sendMessage", chat_id=owner, text=chunk)
