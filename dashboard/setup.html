@@ -87,6 +87,25 @@ button.ghost{background:none;border-color:var(--edge);color:var(--dim)}
       <input id="big_brain_key" type="password" autocomplete="new-password"></label>
   </div>
 
+  <div class="card">
+    <h2>Voice and phone calls — optional, and paid on your own account</h2>
+    <label><div class="q">Your mobile number</div>
+      <div class="hint">So he can ring you, and connect you to calls he makes</div>
+      <input id="mobile" placeholder="04..." autocomplete="off"></label>
+    <label><div class="q">ElevenLabs key — a human-sounding voice</div>
+      <div class="hint">Leave blank and he uses the free local voice</div>
+      <input id="eleven_key" type="password" autocomplete="new-password"></label>
+    <label><div class="q">Twilio account SID</div>
+      <div class="hint">Only needed for real phone calls</div>
+      <input id="twilio_sid" autocomplete="off"></label>
+    <label><div class="q">Twilio auth token</div>
+      <input id="twilio_token" type="password" autocomplete="new-password"></label>
+    <label><div class="q">Your Twilio phone number</div>
+      <input id="twilio_number" placeholder="+61..." autocomplete="off"></label>
+    <div class="note">He always asks before dialling, says he's an assistant,
+      and can never call emergency numbers.</div>
+  </div>
+
   <button id="save">Save and start</button>
   <div class="note" id="saved"></div>
   <div class="note">Nothing here is uploaded anywhere. It's written to a file on this
@@ -95,7 +114,8 @@ button.ghost{background:none;border-color:var(--edge);color:var(--dim)}
 
 <script>
 const F = ["name","city","school_portal","seqta_url","seqta_user","seqta_pass",
-           "telegram_token","big_brain","big_brain_key"];
+           "telegram_token","big_brain","big_brain_key","mobile","eleven_key",
+           "twilio_sid","twilio_token","twilio_number"];
 const el = id => document.getElementById(id);
 
 function toggles(){

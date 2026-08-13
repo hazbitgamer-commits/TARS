@@ -39,6 +39,16 @@ FIELDS = [
              "always free and local."},
     {"key": "big_brain_key", "label": "Your key for that", "secret": True,
      "hint": "Claude: an OAuth token. ChatGPT: an API key starting sk-"},
+    {"key": "mobile", "label": "Your mobile number",
+     "hint": "So he can ring you, and connect you to calls he places"},
+    {"key": "eleven_key", "label": "ElevenLabs key (a human-sounding voice)",
+     "secret": True, "hint": "Optional and paid. Without it he uses the free "
+                             "local voice."},
+    {"key": "twilio_sid", "label": "Twilio account SID",
+     "hint": "Optional — only needed for real phone calls"},
+    {"key": "twilio_token", "label": "Twilio auth token", "secret": True},
+    {"key": "twilio_number", "label": "Your Twilio phone number",
+     "hint": "The number he calls FROM, e.g. +61..."},
 ]
 SECRETS = {f["key"] for f in FIELDS if f.get("secret")}
 
@@ -68,7 +78,11 @@ def _mirror_to_env(data: dict) -> None:
     from the environment. Written key by key so nothing else is disturbed."""
     mapping = {"seqta_url": "SEQTA_URL", "seqta_user": "SEQTA_USER",
                "seqta_pass": "SEQTA_PASS", "telegram_token":
-               "TELEGRAM_BOT_TOKEN", "city": "HOME_CITY"}
+               "TELEGRAM_BOT_TOKEN", "city": "HOME_CITY",
+               "eleven_key": "ELEVENLABS_API_KEY",
+               "twilio_sid": "TWILIO_ACCOUNT_SID",
+               "twilio_token": "TWILIO_AUTH_TOKEN",
+               "twilio_number": "TWILIO_NUMBER"}
     env = BASE / ".env"
     try:
         lines = env.read_text(encoding="utf-8").splitlines()

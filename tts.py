@@ -90,12 +90,48 @@ def _rate_to_speed() -> float:
     return max(0.6, min(1.6, (1.0 + pct / 100) * MOOD_SPEED[_mood_now()]))
 
 
+def _eleven(text: str):
+    """ElevenLabs — the properly human voice, used when a key is set.
+
+    Costs money per character, on his own account, so: only when he's
+    turned it on, never for long passages by accident, and ALWAYS with a
+    silent fallback to the free local voice if anything goes wrong. A
+    failed API call must never leave TARS mute.
+    """
+    import os
+
+    key = (os.getenv("ELEVENLABS_API_KEY") or "").strip()
+    if not key:
+        return None
+    voice_id = (os.getenv("ELEVENLABS_VOICE") or
+                "JBFqnCBsd6RMkjVDRZzb").strip()  # a calm British male
+    try:
+        import requests
+
+        r = requests.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+            headers={"xi-api-key": key, "Content-Type": "application/json"},
+            json={"text": text[:2000],  # a hard cap: never bill a whole essay
+                  "model_id": "eleven_turbo_v2_5",  # fastest — pauses matter
+                  "voice_settings": {"stability": 0.45,
+                                     "similarity_boost": 0.75}},
+            timeout=25)
+        if r.status_code != 200:
+            return None
+        return sf.read(io.BytesIO(r.content), dtype="float32")
+    except Exception:
+        return None
+
+
 def _synth(text: str):
     """(audio, samplerate) from the best engine available, else None.
 
     Kokoro voices are named like bm_george; edge-tts ones like en-GB-RyanNeural.
     """
     text = _prep(text)
+    premium = _eleven(text)
+    if premium is not None:
+        return premium
     if "_" in VOICE and "-" not in VOICE:
         try:
             return _kokoro_engine().create(text, voice=VOICE, speed=_rate_to_speed())

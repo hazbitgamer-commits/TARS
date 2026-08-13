@@ -321,6 +321,45 @@ class Brain:
                              {"role": "assistant", "content": result}]
             return result
 
+        # PHONE CALLS. Above the messaging block, which refuses to contact
+        # people — calling is the one channel he's explicitly allowed, and
+        # only ever after confirming the exact number.
+        asking_history = re.search(
+            r"\b(who have you (called|rung)|have you called anyone|"
+            r"call (log|history)|recent calls)\b", lowered)
+        if asking_history or (
+                re.search(r"\b(call|ring|phone|dial)\b", lowered)
+                # "called" is NOT excluded outright — "who have you called"
+                # is a real question. Only the idioms are.
+                and not re.search(r"\b(recall|call it a|calling it|so.?called|"
+                                  r"what (did|do) you call|phone bridge)\b",
+                                  lowered)):
+            if asking_history:
+                result = self.skills.run("call", {"action": "history"})
+            else:
+                target = re.sub(r".*\b(call|ring|phone|dial)\b\s*", "", lowered)
+                target = re.sub(r"^(up |the |my )", "", target).strip(" .?!")
+                message = ""
+                said = re.search(r"\b(and (say|tell them)|saying)\b\s*(.+)$",
+                                 target)
+                if said:
+                    message = said.group(3).strip()
+                    target = target[:said.start()].strip()
+                result = self.skills.run("call", {
+                    "number": target, "message": message,
+                    "mode": "speak" if message else "bridge"})
+            if result and result.startswith("__CONFIRM__"):
+                _, blob, spoken = result.split("__", 3)[1:]
+                number, mode, msg = (blob[5:].split("|", 2) + ["", ""])[:3]
+                self.pending_delete = ("call", {
+                    "number": number, "mode": mode, "message": msg,
+                    "confirmed": "true"})
+                result = spoken
+            self.history += [{"role": "user", "content": text},
+                             {"role": "assistant", "content": result}]
+            self._journal(f"call: {result[:80]}")
+            return result
+
         # publishing and updating — "publish yourself", "any updates"
         if re.search(r"\b(publish|push) (yourself|your code|your changes|"
                      r"to github)\b|\bpublish now\b", lowered):
@@ -1542,7 +1581,16 @@ class Brain:
                 self.search_memory.observe(name, args)
                 if result.startswith("__CONFIRM__"):  # a skill wants a yes
                     _, target, message = result.split("__", 3)[1:]
-                    if target.startswith("organize:"):  # big file move
+                    if target.startswith("call:"):
+                        # dialling a real human being gets the same
+                        # confirmation as deleting files, and for the same
+                        # reason: it can't be taken back
+                        number, mode, spoken = (target[5:].split("|", 2)
+                                                + ["", ""])[:3]
+                        self.pending_delete = ("call", {
+                            "number": number, "mode": mode,
+                            "message": spoken, "confirmed": "true"})
+                    elif target.startswith("organize:"):  # big file move
                         what, source, dest = target[9:].split("|", 2)
                         self.pending_delete = ("organize", {
                             "what": what, "source": source, "dest": dest,
