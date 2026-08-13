@@ -22,3 +22,4 @@ claude-agent-sdk
 
 # optional extras — uncomment if wanted
 # python-telegram-bot     # not needed: the phone bridge uses plain requests
+keyring

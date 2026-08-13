@@ -57,6 +57,38 @@ FIELDS = [
 ]
 SECRETS = {f["key"] for f in FIELDS if f.get("secret")}
 
+# profile key -> environment variable. Everything that reads a credential
+# (seqta.py, tars_phone.py, phone_call.py, tts.py) reads the environment,
+# so this is the one place that decides what they're called.
+ENV_MAP = {"seqta_url": "SEQTA_URL", "seqta_user": "SEQTA_USER",
+           "seqta_pass": "SEQTA_PASS",
+           "telegram_token": "TELEGRAM_BOT_TOKEN", "city": "HOME_CITY",
+           "eleven_key": "ELEVENLABS_API_KEY",
+           "twilio_sid": "TWILIO_ACCOUNT_SID",
+           "twilio_token": "TWILIO_AUTH_TOKEN",
+           "twilio_number": "TWILIO_NUMBER"}
+
+
+def _env_name(key: str, data: dict | None = None) -> str:
+    """Which environment variable a profile field lands in. big_brain_key is
+    the odd one — it's a Claude token or an OpenAI key depending on choice."""
+    if key == "big_brain_key":
+        which = (data or load()).get("big_brain")
+        return "OPENAI_API_KEY" if which == "ChatGPT" else "CLAUDE_CODE_OAUTH_TOKEN"
+    return ENV_MAP.get(key, key.upper())
+
+
+def _vault():
+    """The password store, or None if it isn't available. Never fatal:
+    without it TARS falls back to the old behaviour rather than refusing
+    to start."""
+    try:
+        import secrets_store
+
+        return secrets_store
+    except Exception:
+        return None
+
 
 def load() -> dict:
     try:
@@ -67,10 +99,18 @@ def load() -> dict:
 
 def save(data: dict) -> None:
     current = load()
+    vault = _vault()
     for key, value in data.items():
         # an empty box means "leave what's there", not "wipe it" — otherwise
         # a masked password field would erase itself on every save
-        if value == "" and key in SECRETS and current.get(key):
+        if value == "" and key in SECRETS and get(key):
+            continue
+        if key in SECRETS and vault:
+            # passwords go to Windows Credential Manager and NOWHERE else.
+            # Not profile.json, not .env — this file gets backed up and that
+            # file gets read by anything on the PC.
+            vault.put_env(_env_name(key, {**current, **data}), value)
+            current.pop(key, None)
             continue
         current[key] = value
     current["set_up"] = True
@@ -80,14 +120,12 @@ def save(data: dict) -> None:
 
 def _mirror_to_env(data: dict) -> None:
     """Keep .env in step, since seqta.py and tars_phone.py read from it and
-    from the environment. Written key by key so nothing else is disturbed."""
-    mapping = {"seqta_url": "SEQTA_URL", "seqta_user": "SEQTA_USER",
-               "seqta_pass": "SEQTA_PASS", "telegram_token":
-               "TELEGRAM_BOT_TOKEN", "city": "HOME_CITY",
-               "eleven_key": "ELEVENLABS_API_KEY",
-               "twilio_sid": "TWILIO_ACCOUNT_SID",
-               "twilio_token": "TWILIO_AUTH_TOKEN",
-               "twilio_number": "TWILIO_NUMBER"}
+    from the environment. Written key by key so nothing else is disturbed.
+
+    SECRETS are deliberately excluded from the FILE — they're set in the
+    live environment from the vault instead (see secrets_store.load_into_env).
+    """
+    mapping = {k: v for k, v in ENV_MAP.items() if k not in SECRETS}
     env = BASE / ".env"
     try:
         lines = env.read_text(encoding="utf-8").splitlines()
@@ -105,15 +143,8 @@ def _mirror_to_env(data: dict) -> None:
         else:
             lines.append(f"{name}={value}")
     if data.get("big_brain_key"):
-        name = ("CLAUDE_CODE_OAUTH_TOKEN"
-                if data.get("big_brain") != "ChatGPT" else "OPENAI_API_KEY")
-        os.environ[name] = data["big_brain_key"]
-        for i, line in enumerate(lines):
-            if line.strip().startswith(f"{name}="):
-                lines[i] = f"{name}={data['big_brain_key']}"
-                break
-        else:
-            lines.append(f"{name}={data['big_brain_key']}")
+        # live environment only — the key itself belongs in the vault
+        os.environ[_env_name("big_brain_key", data)] = data["big_brain_key"]
     try:
         env.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
     except OSError:
@@ -140,6 +171,14 @@ def city() -> str:
 
 
 def get(key: str, default: str = "") -> str:
+    if key in SECRETS:
+        vault = _vault()
+        if vault:
+            found = vault.use_env(_env_name(key))
+            if found:
+                return found
+        # not migrated yet: fall back to the old plaintext home
+        return str(load().get(key, default) or default)
     return str(load().get(key, default) or default)
 
 
@@ -150,11 +189,14 @@ def public_view() -> dict:
     data = load()
     out = {}
     for field in FIELDS:
-        value = str(data.get(field["key"], "") or "")
-        if field.get("secret") and value:
-            out[field["key"]] = "•" * min(len(value), 12)
+        key = field["key"]
+        if field.get("secret"):
+            # the value now lives in the vault, so ask how long it is
+            # without ever putting it in something bound for a web page
+            value = get(key)
+            out[key] = "•" * min(len(value), 12) if value else ""
         else:
-            out[field["key"]] = value
+            out[key] = str(data.get(key, "") or "")
     return out
 
 
@@ -179,5 +221,10 @@ def personalise(text: str) -> str:
 
 
 def reveal() -> dict:
-    """The real values, for the owner's own eyes on his own machine."""
-    return {key: str(load().get(key, "") or "") for key in SECRETS}
+    """The real values, for the owner's own eyes on his own machine.
+
+    This is the one deliberate exception to "a password never comes back
+    out" — he asked for it, because people forget their school password
+    and this is his own dashboard on his own PC, bound to localhost.
+    """
+    return {key: get(key) for key in SECRETS}

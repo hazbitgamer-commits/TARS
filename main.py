@@ -241,6 +241,19 @@ def ensure_single_instance() -> None:
 
 def main() -> None:
     print("TARS is starting up...")
+    # BEFORE anything asks for a credential: pull them out of Windows
+    # Credential Manager into this process's environment. They used to sit
+    # in .env in plain text; now the file has none and this is where they
+    # come from. Must be first — seqta.py and the phone bridge read the
+    # environment the moment they start.
+    try:
+        import secrets_store
+
+        loaded = secrets_store.load_into_env()
+        if loaded:
+            print(f"(unlocked {loaded} credential(s) from Windows vault)")
+    except Exception as e:
+        print(f"(credential vault unavailable: {type(e).__name__})")
     ensure_single_instance()
     import audio_out
 

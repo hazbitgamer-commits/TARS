@@ -119,6 +119,39 @@ def _values() -> list:
     return _cache[1]
 
 
+ENV_PREFIX = "env:"
+
+
+def load_into_env() -> int:
+    """Put the vault's environment secrets into os.environ, in memory only.
+
+    seqta.py, tars_phone.py and the rest read their credentials from the
+    environment, and rewriting all of them would be a large change with a
+    lot of ways to break TARS's school login at 7am. Instead the values
+    move OUT of the .env FILE and are put back into the environment at
+    startup, from encrypted storage. Same code paths, nothing on disk.
+    """
+    import os
+
+    loaded = 0
+    for name in names():
+        if not name.startswith(ENV_PREFIX):
+            continue
+        value = use(name)
+        if value:
+            os.environ[name[len(ENV_PREFIX):].upper()] = value
+            loaded += 1
+    return loaded
+
+
+def put_env(var: str, value: str) -> bool:
+    return put(ENV_PREFIX + var.lower(), value)
+
+
+def use_env(var: str) -> str:
+    return use(ENV_PREFIX + var.lower())
+
+
 def redact(text: str) -> str:
     """The last gate before anything leaves TARS.
 
