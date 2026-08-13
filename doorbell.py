@@ -59,6 +59,9 @@ def ask_setup() -> dict:
         cfg["pc_ip"].count(".") == 3 else "255.255.255.255"
     broadcast = input(f"Broadcast address [{guess}]: ").strip() or guess
     cfg["broadcast"] = broadcast
+    # most home networks are /24; his router hands out a /22. Only matters
+    # if the PC's address ever changes, so it isn't worth a question.
+    cfg["prefix_len"] = 24
     CONFIG.write_text(json.dumps(cfg, indent=1), encoding="utf-8")
     print(f"\nSaved to {CONFIG}. Leave this running and put the phone on "
           f"the charger.\n")
@@ -109,29 +112,49 @@ def relocate() -> bool:
     So: sweep the network for whatever is actually answering as TARS, and
     remember it. Only ever runs when the known address has gone quiet.
     """
+    import ipaddress
+    import queue
     import threading
 
-    prefix = ".".join(CFG["pc_ip"].split(".")[:3])
+    # The network isn't necessarily a /24. His is a /22 — addresses run from
+    # 192.168.4.0 all the way to 192.168.7.255 — so assuming three matching
+    # octets would search a quarter of it and declare the PC dead.
+    try:
+        net = ipaddress.ip_network(
+            f"{CFG['pc_ip']}/{CFG.get('prefix_len', 24)}", strict=False)
+        hosts = [str(h) for h in net.hosts()]
+    except ValueError:
+        prefix = ".".join(CFG["pc_ip"].split(".")[:3])
+        hosts = [f"{prefix}.{n}" for n in range(1, 255)]
+
+    todo = queue.Queue()
+    for h in hosts:
+        todo.put(h)
     found = []
 
-    def probe(n: int) -> None:
-        ip = f"{prefix}.{n}"
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(0.4)
-        try:
-            if s.connect_ex((ip, PULSE_PORT)) == 0 and answers_at(ip, 2.0):
-                found.append(ip)
-        except OSError:
-            pass
-        finally:
-            s.close()
+    def worker() -> None:
+        # a fixed pool, not one thread per address: a /22 is a thousand
+        # addresses and this is running on a phone from 2016
+        while not found:
+            try:
+                ip = todo.get_nowait()
+            except queue.Empty:
+                return
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.4)
+            try:
+                if s.connect_ex((ip, PULSE_PORT)) == 0 and answers_at(ip, 2.0):
+                    found.append(ip)
+            except OSError:
+                pass
+            finally:
+                s.close()
 
-    workers = [threading.Thread(target=probe, args=(n,), daemon=True)
-               for n in range(1, 255)]
-    for w in workers:
+    pool = [threading.Thread(target=worker, daemon=True) for _ in range(48)]
+    for w in pool:
         w.start()
-    for w in workers:
-        w.join(timeout=6)
+    for w in pool:
+        w.join(timeout=30)
 
     if not found:
         return False
