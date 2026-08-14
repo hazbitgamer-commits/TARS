@@ -30,10 +30,19 @@ BASE = Path(__file__).resolve().parent
 CLOUDFLARED = BASE / "tools" / "cloudflared.exe"
 
 MINUTES = 10
-FPS = 8
+FPS = 10
+WIDTH = 640       # 1280 wide at quality 70 is 35KB a frame; this is 7KB
+QUALITY = 60
+TAG_EVERY = 2.0   # seconds between re-identifying faces
 
 _live = {"on": False, "code": "", "url": "", "port": 0, "until": 0.0,
          "server": None, "tunnel": None}
+# ONE capture for the whole stream, however many people are watching.
+# faces.get_frame() opens the camera, throws away six frames to let the
+# exposure settle and closes it again — 2.5 seconds a go. That is exactly
+# right for a single photo and hopeless for video: the first version of
+# this ran at well under one frame a second.
+_latest = {"jpeg": b"", "at": 0.0}
 _lock = threading.Lock()
 
 PAGE = """<!doctype html><meta name=viewport content="width=device-width,initial-scale=1">
@@ -109,32 +118,102 @@ class _Handler(BaseHTTPRequestHandler):
             pass
 
     def _stream(self):
-        import cv2
-
-        import faces
-
+        """Serve whatever the capture thread last produced. This never
+        touches the camera, so ten viewers cost the same as one."""
         self.send_response(200)
         self.send_header("Content-Type",
                          "multipart/x-mixed-replace; boundary=f")
         self.end_headers()
         delay = 1.0 / FPS
+        sent_at = 0.0
         while live():
-            frame = faces.get_frame()
-            if frame is None:
-                time.sleep(0.3)
+            frame_jpeg, at = _latest["jpeg"], _latest["at"]
+            if not frame_jpeg or at == sent_at:
+                time.sleep(delay / 2)
                 continue
-            ok, buf = cv2.imencode(".jpg", frame,
-                                   [cv2.IMWRITE_JPEG_QUALITY, 70])
-            if not ok:
-                continue
+            sent_at = at
             try:
                 self.wfile.write(b"--f\r\nContent-Type: image/jpeg\r\n"
                                  b"Content-Length: " +
-                                 str(len(buf)).encode() + b"\r\n\r\n" +
-                                 buf.tobytes() + b"\r\n")
+                                 str(len(frame_jpeg)).encode() + b"\r\n\r\n" +
+                                 frame_jpeg + b"\r\n")
             except OSError:
                 return          # he closed the tab
             time.sleep(delay)
+
+
+def _capture() -> None:
+    """Hold the camera open for the life of the stream, draw nametags on,
+    and keep one encoded frame ready for everyone watching.
+
+    It also publishes to dashboard.LATEST_JPEG, which is the existing
+    contract for "the feed is live, don't touch the hardware" — so /photo,
+    the guard and the camera skills all keep working while this runs, and
+    get their frames instantly instead of fighting for the device.
+    """
+    import cv2
+
+    try:
+        import faces
+    except Exception:
+        faces = None
+
+    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    delay = 1.0 / FPS
+    tags, tagged_at = [], 0.0
+    try:
+        if not cap.isOpened():
+            return
+        while live():
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                time.sleep(0.2)
+                continue
+
+            # a clean copy goes to the rest of TARS before the boxes are
+            # drawn on — nobody else wants my annotations baked in
+            try:
+                import dashboard
+
+                ok_clean, clean = cv2.imencode(
+                    ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                if ok_clean:
+                    dashboard.LATEST_JPEG = (time.time(), clean.tobytes())
+            except Exception:
+                pass
+
+            now = time.time()
+            if faces is not None and now - tagged_at > TAG_EVERY:
+                tagged_at = now
+                try:
+                    tags = faces.identify(frame, wait=False)
+                except Exception:
+                    tags = []
+
+            scale = WIDTH / float(frame.shape[1])
+            small = cv2.resize(frame, (WIDTH, int(frame.shape[0] * scale)))
+            for tag in tags:
+                x, y, w, h = (int(v * scale) for v in tag["box"])
+                label = tag["name"] or "unknown"
+                colour = (80, 220, 120) if tag["name"] else (120, 120, 200)
+                cv2.rectangle(small, (x, y), (x + w, y + h), colour, 2)
+                cv2.putText(small, label, (x, max(16, y - 8)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, colour, 2)
+
+            ok_enc, buf = cv2.imencode(".jpg", small,
+                                       [cv2.IMWRITE_JPEG_QUALITY, QUALITY])
+            if ok_enc:
+                _latest["jpeg"] = buf.tobytes()
+                _latest["at"] = now
+            time.sleep(delay)
+    finally:
+        try:
+            cap.release()
+        except Exception:
+            pass
+        _latest["jpeg"], _latest["at"] = b"", 0.0
 
 
 def _say(words: str) -> None:
@@ -189,6 +268,7 @@ def start() -> tuple[str, str]:
     server = ThreadingHTTPServer(("127.0.0.1", port), _Handler)
     _live["server"] = server
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=_capture, daemon=True).start()
 
     url = _open_tunnel(port)
     if not url:
