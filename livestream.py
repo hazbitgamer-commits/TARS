@@ -173,11 +173,17 @@ def _capture_screens() -> None:
     delay = 1.0 / _live["fps"]
     want = _live["source"]                    # "screen", "screen:left", ...
     with mss.mss() as sct:
-        monitors = sct.monitors[1:] or sct.monitors[:1]
+        # Sort by where the monitors ACTUALLY are, not the order Windows
+        # lists them in. Windows enumerates the primary display first
+        # wherever it sits: his portrait screen is at x=-1080 — genuinely
+        # the left one — but came second, so "left" gave him the right
+        # screen and the side-by-side view was mirrored.
+        monitors = sorted(sct.monitors[1:] or sct.monitors[:1],
+                          key=lambda m: m["left"])
         if want.endswith("left") and monitors:
             monitors = monitors[:1]
         elif want.endswith("right") and len(monitors) > 1:
-            monitors = monitors[1:2]
+            monitors = monitors[-1:]
         while live():
             started = time.time()
             shots = []

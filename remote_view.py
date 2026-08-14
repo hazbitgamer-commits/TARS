@@ -86,14 +86,19 @@ def screen(which: str = "") -> tuple[Path | None, str]:
         import mss
 
         with mss.mss() as sct:
-            monitors = sct.monitors
-            index = 0
+            # left-to-right by actual position. Windows lists the primary
+            # display first wherever it physically sits, so going by index
+            # handed him the wrong monitor.
+            screens = sorted(sct.monitors[1:] or sct.monitors[:1],
+                             key=lambda m: m["left"])
             want = (which or "").strip().lower()
-            if want in ("left", "1") and len(monitors) > 1:
-                index = 1
-            elif want in ("right", "2") and len(monitors) > 2:
-                index = 2
-            shot = sct.grab(monitors[index] if index else monitors[0])
+            if want in ("left", "1") and screens:
+                target = screens[0]
+            elif want in ("right", "2") and len(screens) > 1:
+                target = screens[-1]
+            else:
+                target = sct.monitors[0]        # everything, side by side
+            shot = sct.grab(target)
             path = _fresh("screen").with_suffix(".png")
             mss.tools.to_png(shot.rgb, shot.size, output=str(path))
         return path, f"Your screen, {time.strftime('%H:%M')}."
