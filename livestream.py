@@ -30,13 +30,30 @@ BASE = Path(__file__).resolve().parent
 CLOUDFLARED = BASE / "tools" / "cloudflared.exe"
 
 MINUTES = 10
-FPS = 10
-WIDTH = 640       # 1280 wide at quality 70 is 35KB a frame; this is 7KB
-QUALITY = 60
+# the webcam tops out at 29.3 fps at 1280x720, so 30 is the real ceiling
+# rather than a wish. At 640 wide / quality 55 that's about 250 KB/s, which
+# is fine on wifi and heavy on mobile data — hence SLOW_FPS.
+FPS = 30
+SLOW_FPS = 12     # for "slow stream" when he's on mobile data
+WIDTH = 640       # 1280 wide at quality 70 is 35KB a frame; this is ~8KB
+QUALITY = 55
 TAG_EVERY = 2.0   # seconds between re-identifying faces
 
+# Screens need different numbers from a camera. His two monitors are
+# 2560x1440 and 1080x1920 (portrait) — 3640x1920 side by side, which is
+# mostly small text, so JPEG can't squeeze it the way it squeezes a face.
+# Measured on his actual desktop, at 12 fps:
+#     1280 wide, q45 -> 797 KB/s   too heavy for mobile data
+#      960 wide, q45 -> 491 KB/s   readable, and survives a phone connection
+#      800 wide, q45 -> 381 KB/s   cheap, but the text starts to go
+# 960 it is. And 12 fps, because watching a screen isn't watching a room:
+# nothing on a desktop needs thirty frames a second.
+SCREEN_WIDTH = 960
+SCREEN_QUALITY = 45
+SCREEN_FPS = 12
+
 _live = {"on": False, "code": "", "url": "", "port": 0, "until": 0.0,
-         "server": None, "tunnel": None}
+         "server": None, "tunnel": None, "source": "camera", "fps": FPS}
 # ONE capture for the whole stream, however many people are watching.
 # faces.get_frame() opens the camera, throws away six frames to let the
 # exposure settle and closes it again — 2.5 seconds a go. That is exactly
@@ -124,7 +141,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type",
                          "multipart/x-mixed-replace; boundary=f")
         self.end_headers()
-        delay = 1.0 / FPS
+        delay = 1.0 / _live["fps"]
         sent_at = 0.0
         while live():
             frame_jpeg, at = _latest["jpeg"], _latest["at"]
@@ -140,6 +157,63 @@ class _Handler(BaseHTTPRequestHandler):
             except OSError:
                 return          # he closed the tab
             time.sleep(delay)
+
+
+def _capture_screens() -> None:
+    """Stream the monitors instead of the camera — both side by side when
+    there are two, so he can watch the whole desk from his phone."""
+    import cv2
+    import numpy as np
+
+    try:
+        import mss
+    except ImportError:
+        return
+
+    delay = 1.0 / _live["fps"]
+    want = _live["source"]                    # "screen", "screen:left", ...
+    with mss.mss() as sct:
+        monitors = sct.monitors[1:] or sct.monitors[:1]
+        if want.endswith("left") and monitors:
+            monitors = monitors[:1]
+        elif want.endswith("right") and len(monitors) > 1:
+            monitors = monitors[1:2]
+        while live():
+            started = time.time()
+            shots = []
+            for mon in monitors:
+                raw = sct.grab(mon)
+                shots.append(np.array(raw)[:, :, :3])   # BGRA -> BGR
+            if not shots:
+                return
+            if len(shots) > 1:
+                # one monitor is portrait and the other landscape — pad the
+                # shorter to match, never stretch, or everything on it is
+                # the wrong shape
+                tall = max(s.shape[0] for s in shots)
+                padded = []
+                for s in shots:
+                    if s.shape[0] < tall:
+                        s = cv2.copyMakeBorder(s, 0, tall - s.shape[0], 0, 0,
+                                               cv2.BORDER_CONSTANT, value=(0, 0, 0))
+                    padded.append(s)
+                frame = np.hstack(padded)
+            else:
+                frame = shots[0]
+            # scale the WHOLE thing once, at the end. Scaling each monitor to
+            # full width first made two screens twice as wide as one, and
+            # doubled the bandwidth for no extra detail.
+            scale = SCREEN_WIDTH / float(frame.shape[1])
+            frame = cv2.resize(frame, (SCREEN_WIDTH,
+                                       max(1, int(frame.shape[0] * scale))))
+            ok, buf = cv2.imencode(".jpg", frame,
+                                   [cv2.IMWRITE_JPEG_QUALITY, SCREEN_QUALITY])
+            if ok:
+                _latest["jpeg"] = buf.tobytes()
+                _latest["at"] = time.time()
+            rest = delay - (time.time() - started)
+            if rest > 0:
+                time.sleep(rest)
 
 
 def _capture() -> None:
@@ -161,30 +235,38 @@ def _capture() -> None:
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-    delay = 1.0 / FPS
+    delay = 1.0 / _live["fps"]
     tags, tagged_at = [], 0.0
+    published = [0.0]        # when the last full-size frame went to dashboard
     try:
         if not cap.isOpened():
             return
         while live():
+            started = time.time()
             ok, frame = cap.read()
             if not ok or frame is None:
                 time.sleep(0.2)
                 continue
 
-            # a clean copy goes to the rest of TARS before the boxes are
-            # drawn on — nobody else wants my annotations baked in
-            try:
-                import dashboard
-
-                ok_clean, clean = cv2.imencode(
-                    ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
-                if ok_clean:
-                    dashboard.LATEST_JPEG = (time.time(), clean.tobytes())
-            except Exception:
-                pass
-
             now = time.time()
+            # A clean full-size copy goes to the rest of TARS, before the
+            # boxes are drawn on — nobody else wants my annotations baked in.
+            # Throttled to a few a second: encoding 1280x720 at quality 75 is
+            # the most expensive thing in this loop, and doing it on every
+            # frame held the stream to 15 fps. /photo and the guard only need
+            # a frame that's under two seconds old.
+            if now - published[0] > 0.2:
+                published[0] = now
+                try:
+                    import dashboard
+
+                    ok_clean, clean = cv2.imencode(
+                        ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                    if ok_clean:
+                        dashboard.LATEST_JPEG = (now, clean.tobytes())
+                except Exception:
+                    pass
+
             if faces is not None and now - tagged_at > TAG_EVERY:
                 tagged_at = now
                 try:
@@ -207,7 +289,12 @@ def _capture() -> None:
             if ok_enc:
                 _latest["jpeg"] = buf.tobytes()
                 _latest["at"] = now
-            time.sleep(delay)
+            # cap.read() already waits for the camera's next frame, so a flat
+            # sleep on top halves the rate — 30 fps of camera became 15. Only
+            # sleep for whatever's LEFT of the frame budget.
+            rest = delay - (time.time() - started)
+            if rest > 0:
+                time.sleep(rest)
     finally:
         try:
             cap.release()
@@ -252,11 +339,18 @@ def _open_tunnel(port: int) -> str:
     return ""
 
 
-def start() -> tuple[str, str]:
-    """Returns (message, code). The code is sent separately, on purpose."""
+def start(source: str = "camera", fps: int = 0) -> tuple[str, str]:
+    """Returns (message, code). The code is sent separately, on purpose.
+
+    source: "camera", "screen", "screen:left", "screen:right"
+    """
     with _lock:
         if live():
             return status(), ""
+        _live["source"] = (source or "camera").strip().lower()
+        default_fps = (SCREEN_FPS if _live["source"].startswith("screen")
+                       else FPS)
+        _live["fps"] = max(2, min(30, fps or default_fps))
         if not CLOUDFLARED.exists():
             return ("I can't put a stream online — cloudflared isn't "
                     "installed in my tools folder."), ""
@@ -268,7 +362,8 @@ def start() -> tuple[str, str]:
     server = ThreadingHTTPServer(("127.0.0.1", port), _Handler)
     _live["server"] = server
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    threading.Thread(target=_capture, daemon=True).start()
+    grab = _capture_screens if _live["source"].startswith("screen") else _capture
+    threading.Thread(target=grab, daemon=True).start()
 
     url = _open_tunnel(port)
     if not url:
@@ -277,7 +372,10 @@ def start() -> tuple[str, str]:
     _live["url"] = url
 
     threading.Timer(MINUTES * 60, lambda: stop()).start()
-    _say("Live camera on. Streaming this room for ten minutes.")
+    what = ("this room" if _live["source"] == "camera"
+            else "my screens" if _live["source"] == "screen"
+            else "a screen")
+    _say(f"Live stream on. Sharing {what} for ten minutes.")
     return url, code
 
 

@@ -129,6 +129,43 @@ _GUARD_STATUS = re.compile(
     r"\b(is the guard (on|running)|guard status|are you (still )?watching)\b")
 
 
+# Starting and STOPPING the live stream by voice. Stopping matters most:
+# it could only be turned off from Telegram, so saying "stop the live
+# stream" in the room did nothing at all. Turning a camera off must never
+# be harder than turning it on.
+_STREAM_OFF = re.compile(
+    r"\b(stop|end|close|kill|turn off|shut off|cut) (the |my )?"
+    r"(live ?stream|stream|live view|live)\b"
+    r"|\b(live ?stream|stream) off\b")
+_STREAM_ON = re.compile(
+    r"\b(start|begin|open|do) (a |the )?live ?stream\b"
+    # the adjective matters: "stream my LEFT screen" put a word between the
+    # possessive and the noun, and the pattern missed the lot
+    r"|\b(live ?stream|stream|share) (my |the )?"
+    r"(left |right |main |other |second |both )?"
+    r"(screen|screens|monitors?|room|camera|webcam)\b"
+    r"|\bshare my screen\b|\bstream to my phone\b")
+_STREAM_STATUS = re.compile(
+    r"\b(is the (live ?)?stream (on|running|going)|stream status)\b")
+
+
+def wants_stream(lowered: str) -> tuple[str, str]:
+    """(action, source) — action is '' when this isn't about the stream."""
+    if _STREAM_OFF.search(lowered):
+        return "stop", ""
+    if _STREAM_STATUS.search(lowered):
+        return "status", ""
+    if _STREAM_ON.search(lowered):
+        if re.search(r"\bleft\b", lowered):
+            return "start", "screen:left"
+        if re.search(r"\bright\b", lowered):
+            return "start", "screen:right"
+        if re.search(r"\b(screens?|monitors?|desktop)\b", lowered):
+            return "start", "screen"
+        return "start", "camera"
+    return "", ""
+
+
 def wants_guard(lowered: str) -> str:
     """'on', 'off', 'status', or '' for none of the above."""
     if _GUARD_OFF.search(lowered):
@@ -840,6 +877,14 @@ class Brain:
         # and saved passwords was unreachable by voice. A better skill
         # description won't win against "open X" meaning "launch X", so this
         # is decided here instead of being argued with the router.
+        stream_action, stream_source = wants_stream(lowered)
+        if stream_action:
+            result = self.skills.run("livestream", {
+                "action": stream_action, "source": stream_source or "camera"})
+            self.history += [{"role": "user", "content": text},
+                             {"role": "assistant", "content": result}]
+            return result
+
         guard_action = wants_guard(lowered)
         if guard_action:
             result = self.skills.run("guard", {"action": guard_action})
