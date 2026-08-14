@@ -2492,11 +2492,34 @@ class Brain:
                     f"names, not links, so each one's a GitHub search.")
         return f"Opened {listed} in your browser."
 
+    # Verbs on the action list also have innocent, state-of-being uses, and
+    # "run" is the worst offender. Asked "how are you today?", TARS answered
+    # "I'm running smoothly" — which matched `run` + `\w*ing`, was judged a
+    # bluffed action, and got "Scratch that — I said it but didn't actually
+    # do it" bolted onto the end of a perfectly honest greeting.
+    #
+    # Deleting "run" from the list isn't the answer: "I'm running the scan" is
+    # a genuine bluff and needs catching. These phrasings are cut out of the
+    # reply BEFORE the test, so "I'm running smoothly. Opening Spotify now."
+    # still gets caught on the half that's actually a claim.
+    _BENIGN_RX = re.compile(
+        r"\b(?:i'?m|i am)\s+(?:now\s+|still\s+)?running\s+"
+        r"(?:smoothly|fine|well|normally|ok(?:ay)?|great|good|slowly|slow|"
+        r"low|late|behind|on\s+\w+)\b"
+        r"|\brunning\s+(?:smoothly|fine|well|normally|low|late|behind)\b"
+        r"|\b(?:i'?m|i am)\s+starting\s+to\s+"
+        r"(?:think|wonder|see|feel|get|believe|suspect|understand)\b"
+        r"|\bchanging\s+my\s+mind\b"
+        r"|\bmaking\s+(?:sense|sure)\b"
+        r"|\bkeeping\s+(?:an\s+eye|track|it\s+in\s+mind)\b",
+        re.I)
+
     def _action_claim(self, reply: str) -> bool:
         """The universal law: chat replies only exist when NO skill ran, so
         ANY action-claim in one is false. the owner: 'I need it to stop saying
         it's doing things then not doing it.'"""
         v = self._ACTION_V
+        reply = self._BENIGN_RX.sub(" ", reply)
         patterns = (
             rf"\b(i'?ll|i will|let me|i'?m going to)\s+(go ahead and\s+|"
             rf"(?:try|attempt)(?:ing)?\s+(?:to\s+)?)?(?:{v})",
@@ -2511,8 +2534,10 @@ class Brain:
             r"\b(consider it done|it'?s all set|all set now|done and dusted|sorted now)\b",
             r"i'?ll (let you know|tell you|give you a (note|shout)) when\b"
             r"[^.!?]*(done|complete|finished|ready)",
-            r"\b(is|are) (underway|in progress|being (processed|worked on|"
-            r"fine.?tuned|improved))",
+            # contractions count: "that's underway" is the same claim as
+            # "that is underway", and only the second was being caught
+            r"(?:\b(?:is|are)|'s|'re)\s+(underway|in progress|being "
+            r"(processed|worked on|fine.?tuned|improved))",
         )
         if not any(re.search(p, reply, re.I) for p in patterns):
             return False
