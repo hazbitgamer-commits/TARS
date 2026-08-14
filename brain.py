@@ -2541,6 +2541,64 @@ class Brain:
         r"|\bkeeping\s+(?:an\s+eye|track|it\s+in\s+mind)\b",
         re.I)
 
+    # Asked "tell me what the scar is right now" — almost certainly "score",
+    # misheard — TARS answered: "The scar on your face, from the accident
+    # during the construction project... a deep mark near your left eyebrow,
+    # roughly an inch long." He invented an accident, a project and an injury,
+    # in confident detail, about a real person's body.
+    #
+    # There has been a prompt rule against this for months ("Never invent
+    # memories, people, or past conversations"). It didn't hold, because
+    # prompt rules don't. A claim about his life has to be GROUNDED in
+    # something TARS actually has — the vault or this conversation — and if
+    # it isn't, it doesn't get said.
+    _LIFE_CLAIM = re.compile(
+        r"\byour (?P<what>face|head|arm|leg|knee|eye|eyebrow|hand|back|"
+        r"shoulder|scar|injury|wound|surgery|operation|accident|illness|"
+        r"condition|tattoo|bruise|stitches|diagnosis|medication)\b"
+        r"|\bfrom the (?P<ev>accident|crash|incident|fall|surgery|operation)\b"
+        # "when you broke your arm" — needs to capture the arm, or there's
+        # nothing to look up. Injury verbs only: "when you were asking about
+        # the timetable" is a reference to this conversation, not a claim
+        # about his life, and must not be caught.
+        r"|\bwhen you (?:broke|fell|hurt|injured)\s+(?:your\s+)?(?P<past>\w+)",
+        re.I)
+
+    def _grounded(self, word: str) -> bool:
+        """Is there any actual record of this — in his vault, or in what's
+        been said today? Cheap and deliberately generous: one mention
+        anywhere is enough to let it through, because the target is pure
+        invention, not imperfect recall."""
+        word = (word or "").lower().strip()
+        if len(word) < 3:
+            return True
+        for turn in self.history[-40:]:
+            if word in str(turn.get("content", "")).lower():
+                return True
+        try:
+            for path in (self.base / "vault").rglob("*.md"):
+                try:
+                    if word in path.read_text(encoding="utf-8",
+                                              errors="ignore").lower():
+                        return True
+                except OSError:
+                    continue
+        except Exception:
+            return True          # can't check -> don't accuse
+        return False
+
+    def _invented_history(self, reply: str) -> str:
+        """The thing it claimed to know about him but has no record of, or ""
+        if the reply is clean."""
+        match = self._LIFE_CLAIM.search(reply or "")
+        if not match:
+            return ""
+        found = match.groupdict()
+        word = (found.get("what") or found.get("ev") or found.get("past") or "")
+        if not word:
+            return ""
+        return "" if self._grounded(word) else word.lower()
+
     def _action_claim(self, reply: str) -> bool:
         """The universal law: chat replies only exist when NO skill ran, so
         ANY action-claim in one is false. the owner: 'I need it to stop saying
@@ -2640,6 +2698,11 @@ class Brain:
         if self._false_progress(answer) or self._action_claim(answer):
             rescued = self._rescue_action(text)
             answer = rescued if rescued else answer + " " + self.HONESTY_LINE
+        ungrounded = self._invented_history(answer)
+        if ungrounded:
+            answer = (f"I don't actually know anything about {ungrounded} — "
+                      f"I've no record of it, and I'd rather say so than make "
+                      f"something up. Did I mishear you?")
         self.last_turn = {"said": text, "skill": "chat", "args": {},
                           "at": time.time(), "reply": answer[:200]}
         self.history += [
