@@ -236,7 +236,23 @@ el("lg_add").addEventListener("click", async () => {
   drawLogins();
   const r = await fetch("/api/setup");
   const s = await r.json();
-  F.forEach(k => { if(s.values[k] !== undefined) el(k).value = s.values[k]; });
+  // Load saved values back into the boxes — EXCEPT the masked ones. Putting
+  // "••••••••" in a password box means pressing Save writes those bullets
+  // over the real password. That silently destroyed the school login, the
+  // Telegram token, the Twilio token and the Claude token. Secrets show an
+  // empty box with a note instead; blank means "keep what's saved", and
+  // Show still reveals the real value.
+  const MASK = /^[•*·●]+$/;
+  F.forEach(k => {
+    const v = s.values[k];
+    if (v === undefined) return;
+    if (typeof v === "string" && MASK.test(v)) {
+      el(k).value = "";
+      el(k).placeholder = "saved — leave blank to keep it";
+    } else {
+      el(k).value = v;
+    }
+  });
   if(!s.first_run){
     el("lede").textContent = "Your details. Change anything and save — " +
       "click Show to read a password back.";

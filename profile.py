@@ -100,6 +100,24 @@ def load() -> dict:
         return {}
 
 
+def _is_mask(value) -> bool:
+    """Is this the row of bullets we SHOW instead of a password, being handed
+    back to us as though it were one?
+
+    The setup page loaded masked values into its boxes, so pressing Save
+    wrote "••••••••••••" over the real thing. It destroyed his school
+    password, his Telegram token, his Twilio token and his Claude token —
+    silently, every time he saved the page for an unrelated reason. SEQTA
+    then reported "logged in" while being refused, so nothing looked wrong
+    for weeks.
+
+    The page has been fixed too, but this is the gate that matters: no
+    future page, in this repo or anyone else's copy, can do it again.
+    """
+    text = str(value or "").strip()
+    return bool(text) and all(ord(c) == 8226 or c in "*•·●" for c in text)
+
+
 def save(data: dict) -> None:
     current = load()
     vault = _vault()
@@ -108,6 +126,8 @@ def save(data: dict) -> None:
         # a masked password field would erase itself on every save
         if value == "" and key in SECRETS and get(key):
             continue
+        if key in SECRETS and _is_mask(value):
+            continue        # that's the mask coming back, not a new password
         if key in SECRETS and vault:
             # passwords go to Windows Credential Manager and NOWHERE else.
             # Not profile.json, not .env — this file gets backed up and that
