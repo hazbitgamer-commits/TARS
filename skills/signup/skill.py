@@ -25,12 +25,15 @@ means the redaction filter picks it up automatically — from that moment
 TARS physically cannot say it out loud or text it.
 """
 import json
-import re
 import secrets as _random
 import string
+import sys
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parents[2]
+if str(BASE) not in sys.path:
+    sys.path.insert(0, str(BASE))
+
 LOGINS = BASE / "logins.json"     # usernames only — never passwords
 
 DESCRIPTION = ("FILL IN a signup / registration form that's already open on "
@@ -50,19 +53,7 @@ PAYMENT = ("card number", "cardnumber", "cvv", "cvc", "security code",
            "bsb", "sort code", "routing number", "account number",
            "credit card", "debit card")
 
-# what each box is, in the order we try to match. Longest/most specific
-# first: "confirm password" must beat "password".
-KINDS = [
-    ("confirm", ("confirm password", "repeat password", "re-enter password",
-                 "retype password", "password again", "confirm your password")),
-    ("password", ("password", "passphrase", "choose a password")),
-    ("email", ("email", "e-mail", "email address")),
-    ("first", ("first name", "given name", "forename")),
-    ("last", ("last name", "surname", "family name")),
-    ("username", ("username", "user name", "display name", "nickname",
-                  "handle", "screen name")),
-    ("full", ("full name", "your name", "name")),
-]
+# (which box is which now lives in webforms.py, shared with the login filler)
 
 # generated passwords avoid characters that uiautomation's SendKeys treats
 # as commands — a stray "+" or "{" would type something else entirely and
@@ -78,115 +69,6 @@ def _make_password(length: int = 20) -> str:
                 and any(c.isdigit() for c in pw)
                 and any(c in "-_.!?" for c in pw)):
             return pw
-
-
-def _label(control) -> str:
-    """What a box calls itself. Falls back through the properties websites
-    actually populate — many leave Name empty and only set the placeholder
-    or the help text."""
-    for attr in ("Name", "AutomationId", "HelpText"):
-        try:
-            value = (getattr(control, attr, "") or "").strip()
-        except Exception:
-            value = ""
-        if value:
-            return value
-    return ""
-
-
-def _flatten(text: str) -> str:
-    """Punctuation out, single spaces in. Applied to the LABEL and to the
-    patterns alike — matching a hyphenated pattern against de-hyphenated
-    text is how "re-enter password" got treated as the first password box."""
-    return " ".join(re.sub(r"[^a-z0-9 ]", " ", text.lower()).split())
-
-
-_KINDS_FLAT = [(kind, tuple(_flatten(w) for w in words)) for kind, words in KINDS]
-
-
-def _classify(label: str) -> str:
-    low = _flatten(label)
-    for kind, words in _KINDS_FLAT:
-        if any(w in low for w in words):
-            return kind
-    return ""
-
-
-def _domain() -> str:
-    """Which site this is, from the browser's address bar."""
-    try:
-        import uiautomation as auto
-
-        win = auto.GetForegroundControl().GetTopLevelControl()
-        for name in ("Address and search bar", "Address bar", "Search or enter address"):
-            bar = win.EditControl(Name=name)
-            if bar.Exists(1, 0.1):
-                url = (bar.GetValuePattern().Value or "").strip()
-                m = re.search(r"https?://([^/]+)", url) or re.match(r"([\w.-]+\.\w+)", url)
-                if m:
-                    return m.group(1).lower().replace("www.", "")
-    except Exception:
-        pass
-    try:
-        import uiautomation as auto
-
-        title = (auto.GetForegroundControl().GetTopLevelControl().Name or "")
-        return (title.split(" - ")[-1] or "this site").strip().lower()[:40]
-    except Exception:
-        return "this site"
-
-
-def _boxes():
-    """Every text box on the page, in reading order."""
-    import time
-
-    import uiautomation as auto
-
-    win = auto.GetForegroundControl().GetTopLevelControl()
-    # Chromium hides the page's elements until an accessibility client pokes
-    # the document — same wake-up the clicker needs
-    try:
-        doc = win.DocumentControl(searchDepth=20)
-        if doc.Exists(2, 0.2):
-            doc.GetChildren()
-            time.sleep(0.6)
-            win = doc
-    except Exception:
-        pass
-
-    found = []
-
-    def walk(node, depth=0):
-        if depth > 25 or len(found) > 60:
-            return
-        try:
-            children = node.GetChildren()
-        except Exception:
-            return
-        for child in children:
-            try:
-                if child.ControlTypeName == "EditControl":
-                    rect = child.BoundingRectangle
-                    if rect.width() > 20 and rect.height() > 8:
-                        found.append(child)
-                walk(child, depth + 1)
-            except Exception:
-                continue
-
-    walk(win)
-    return found
-
-
-def _type_into(control, text: str) -> bool:
-    import uiautomation as auto
-
-    try:
-        control.SetFocus()
-        auto.SendKeys("{Ctrl}a", waitTime=0)      # replace, don't append
-        auto.SendKeys(text, waitTime=0)
-        return True
-    except Exception:
-        return False
 
 
 def _remember_username(domain: str, username: str) -> None:
@@ -211,13 +93,14 @@ def run(args: dict) -> str:
         return "I can't read forms on this computer — uiautomation isn't installed."
 
     import profile
+    import webforms
 
-    boxes = _boxes()
+    boxes = webforms.boxes()
     if not boxes:
         return ("I can't see any boxes to fill in. Is the signup page open "
                 "and in front?")
 
-    labels = [_label(b) for b in boxes]
+    labels = [webforms.label(b) for b in boxes]
 
     # HARD STOP: a card field means this isn't a plain signup
     hit = next((lab for lab in labels
@@ -230,7 +113,7 @@ def run(args: dict) -> str:
     email = str(args.get("email") or "").strip() or profile.get("email")
     name = profile.owner()
     first, _, last = name.partition(" ")
-    domain = _domain()
+    domain = webforms.domain() or 'this site'
     password = _make_password()
 
     values = {"email": email, "username": email.split("@")[0] if email else "",
@@ -239,7 +122,7 @@ def run(args: dict) -> str:
 
     filled, skipped, used_password = [], [], False
     for box, label in zip(boxes, labels):
-        kind = _classify(label)
+        kind = webforms.classify(label)
         if not kind:
             if label:
                 skipped.append(label[:24])
@@ -248,7 +131,7 @@ def run(args: dict) -> str:
         if not value:
             skipped.append(label[:24])
             continue
-        if _type_into(box, value):
+        if webforms.type_into(box, value):
             filled.append(kind)
             if kind in ("password", "confirm"):
                 used_password = True

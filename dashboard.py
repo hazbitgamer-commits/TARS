@@ -344,6 +344,21 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps({"values": profile.public_view(),
                                         "first_run": profile.needs_setup()}
                                        ).encode(), "application/json")
+        elif route == "/api/logins":
+            # site names and usernames only. The passwords are never sent to
+            # a web page, not even his own — there is no route that returns
+            # one, so there's no bug that can leak one.
+            import secrets_store
+
+            try:
+                users = json.loads((BASE / "logins.json").read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                users = {}
+            sites = sorted(n[len("site:"):] for n in secrets_store.names()
+                           if n.startswith("site:"))
+            self._send(200, json.dumps(
+                [{"site": s, "username": users.get(s, "")} for s in sites]
+            ).encode(), "application/json")
         elif route == "/hud":
             html = (BASE / "dashboard" / "hud.html").read_bytes()
             self._send(200, html, "text/html; charset=utf-8")
@@ -779,6 +794,43 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, b'{"ok": true}', "application/json")
                 except Exception:
                     self._send(500, b'{"error": "failed"}', "application/json")
+        elif self.path.startswith("/api/logins"):
+            # Saved website logins. The password goes to Windows Credential
+            # Manager; the username goes to a plain file. They're separated
+            # on purpose: everything in the vault gets blanked out of TARS's
+            # speech, and having his own email replaced with
+            # [password hidden] mid-sentence would be daft.
+            import secrets_store
+
+            length = int(self.headers.get("Content-Length", 0))
+            data = json.loads(self.rfile.read(length) or b"{}")
+            import re
+
+            store = BASE / "logins.json"
+            try:
+                users = json.loads(store.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                users = {}
+            site = str(data.get("site", "")).strip().lower()
+            site = re.sub(r"^https?://", "", site).split("/")[0].replace("www.", "")
+
+            if self.path == "/api/logins/delete":
+                secrets_store.forget(f"site:{site}")
+                users.pop(site, None)
+                store.write_text(json.dumps(users, indent=1), encoding="utf-8")
+                self._send(200, b'{"ok": true}', "application/json")
+            elif not site or not data.get("password"):
+                self._send(200, json.dumps(
+                    {"error": "I need the site and the password."}
+                ).encode(), "application/json")
+            else:
+                secrets_store.put(f"site:{site}", str(data["password"]))
+                if data.get("username"):
+                    users[site] = str(data["username"])
+                    store.write_text(json.dumps(users, indent=1), encoding="utf-8")
+                self._send(200, json.dumps({"ok": True, "site": site}).encode(),
+                           "application/json")
+
         elif self.path.startswith("/api/setup"):
             import profile
 

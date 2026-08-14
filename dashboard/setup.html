@@ -116,6 +116,26 @@ button.ghost{background:none;border-color:var(--edge);color:var(--dim)}
       and can never call emergency numbers.</div>
   </div>
 
+  <div class="card">
+    <h2>Website logins</h2>
+    <div class="note">Passwords go into Windows Credential Manager, encrypted
+      and tied to your Windows login — never into a file, and never into the
+      published code. Once saved, TARS physically cannot say one out loud or
+      text it: they're filtered out of everything he says.</div>
+    <label><div class="q">Website</div>
+      <input id="lg_site" placeholder="e.g. netflix.com" autocomplete="off"></label>
+    <label><div class="q">Username or email</div>
+      <input id="lg_user" placeholder="you@example.com" autocomplete="off"></label>
+    <label><div class="q">Password</div>
+      <input id="lg_pass" type="password" placeholder="typed straight into the vault"
+             autocomplete="new-password"></label>
+    <button type="button" id="lg_add">Save this login</button>
+    <div class="note" id="lg_out"></div>
+    <div id="lg_list" class="note"></div>
+    <div class="note">Then say "log me in" with the site open, and he'll fill
+      the boxes. He never presses sign in — that's your keypress.</div>
+  </div>
+
   <button id="save">Save and start</button>
   <div class="note" id="saved"></div>
   <div class="note">Nothing here is uploaded anywhere. It's written to a file on this
@@ -183,7 +203,37 @@ el("save").addEventListener("click", async () => {
   el("saved").className = "note ok";
 });
 
+async function drawLogins(){
+  const r = await fetch("/api/logins");
+  const list = await r.json();
+  const box = el("lg_list");
+  if(!list.length){ box.textContent = "No logins saved yet."; return; }
+  box.innerHTML = "Saved: " + list.map(x =>
+    `<b>${x.site}</b>${x.username ? " (" + x.username + ")" : ""}` +
+    ` <a href="#" data-site="${x.site}" class="forget">forget</a>`).join(" · ");
+  box.querySelectorAll("a.forget").forEach(a => a.onclick = async e => {
+    e.preventDefault();
+    await fetch("/api/logins/delete", {method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({site: a.dataset.site})});
+    drawLogins();
+  });
+}
+
+el("lg_add").addEventListener("click", async () => {
+  const body = {site: el("lg_site").value, username: el("lg_user").value,
+                password: el("lg_pass").value};
+  const r = await fetch("/api/logins", {method:"POST",
+    headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+  const s = await r.json();
+  el("lg_out").textContent = s.error ? s.error : "Saved for " + s.site + ".";
+  el("lg_out").className = s.error ? "note" : "note ok";
+  if(!s.error){ el("lg_site").value = ""; el("lg_user").value = "";
+                el("lg_pass").value = ""; drawLogins(); }
+});
+
 (async () => {
+  drawLogins();
   const r = await fetch("/api/setup");
   const s = await r.json();
   F.forEach(k => { if(s.values[k] !== undefined) el(k).value = s.values[k]; });
