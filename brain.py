@@ -1784,6 +1784,12 @@ class Brain:
               "screen_task", "restart_engine", "fut_market", "organize",
               "downloads", "backup", "email_send"}
 
+    # how long after hearing him for certain an unrecognised voice is still
+    # assumed to be him. Long enough to cover a mic stutter mid-conversation,
+    # short enough that walking away and someone else sitting down doesn't
+    # inherit his permissions.
+    _DROPOUT_GRACE = 180
+
     def _voice_block(self, name: str) -> str | None:
         """Voice recognition is a speed bump, not a lock — it can be fooled
         by a recording. It's here so someone else at the mic can't casually
@@ -1811,6 +1817,25 @@ class Brain:
         if not owner or owner == "you":
             return None  # nobody has said who they are yet — don't lock them out
         same = who and who.strip().lower() == owner.lower()
+        if same:
+            self._owner_heard_at = time.time()
+
+        # "Restart yourself" worked, then was refused seconds later, because
+        # his mic had dropped the voice ID to unknown mid-conversation. The
+        # LifeCam does this intermittently and has for weeks.
+        #
+        # A DIFFERENT enrolled person is what this guard is actually for, and
+        # that still blocks. But "unknown" isn't a person — it's a failed
+        # recognition, and refusing him on his own machine because his
+        # microphone stuttered makes the guard the problem. So: if he was
+        # positively identified moments ago, an unknown right after it is a
+        # dropout, not a stranger. Someone walking up cold, with no recent
+        # identification, is still refused.
+        if not same and not who:
+            heard = getattr(self, "_owner_heard_at", 0)
+            if time.time() - heard < self._DROPOUT_GRACE:
+                return None
+
         if name in self._POWER and not same:
             return ("I need to be sure it's you before I do that. Say it "
                     "again, or type it on the dashboard.")
