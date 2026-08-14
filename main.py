@@ -304,6 +304,11 @@ def main() -> None:
 
     heartbeat.start()  # lets the doorbell phone see he's awake. Says only
     # "TARS" to anyone on the home WiFi — the dashboard stays on localhost.
+    import button_finger
+
+    button_finger.start()  # feeds the servo on the power button. If TARS
+    # goes quiet for three minutes it presses — the only thing that can
+    # bring the PC back from a shutdown or a blackout.
     # after a healthy minute of uptime, this running set of core files is
     # proven bootable — snapshot it so boot.py can roll back a bad Kipp
     # self-upgrade that breaks start-up

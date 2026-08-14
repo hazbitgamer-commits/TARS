@@ -116,6 +116,19 @@ def main() -> None:
                 STOOD_DOWN.write_text("shut down on purpose", encoding="utf-8")
             except OSError:
                 pass
+            # Tell the servo on the power button that this shutdown was
+            # meant. Otherwise it does exactly its job three minutes later
+            # and switches the machine back on, which is correct behaviour
+            # and completely against his wishes. Done here rather than in
+            # the engine because the engine has already gone, releasing the
+            # serial port for us to use.
+            try:
+                import button_finger
+
+                if button_finger._open_and_send("D120"):
+                    log("[supervisor] told the button finger to stay down")
+            except Exception:
+                pass
             return
         log(f"[supervisor] engine DIED, exit code {code} "
             f"({hex(code & 0xFFFFFFFF)})")
