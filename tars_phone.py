@@ -346,9 +346,14 @@ def _command(cmd: str, chat_id: int) -> bool:
             source, what = "screen", "both your screens"
         else:
             source, what = "camera", "the room"
+        control = "control" in low
+        if control and not source.startswith("screen"):
+            source, what = "screen", "both your screens"
         _api("sendMessage", chat_id=chat_id,
-             text=f"Opening a live view of {what} — give me a few seconds.")
-        url, code = livestream.start(source)
+             text=f"Opening a live view of {what}"
+                  + (" WITH CONTROL" if control else "")
+                  + " — give me a few seconds.")
+        url, code = livestream.start(source, control=control)
         if not code:
             _api("sendMessage", chat_id=chat_id, text=url)
             return True

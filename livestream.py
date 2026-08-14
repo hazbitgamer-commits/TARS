@@ -18,6 +18,7 @@ show his bedroom, so it gets the ceremony:
 
 Nothing is recorded. Frames go straight out and are not kept.
 """
+import json
 import random
 import secrets
 import socket
@@ -53,13 +54,21 @@ SCREEN_QUALITY = 45
 SCREEN_FPS = 12
 
 _live = {"on": False, "code": "", "url": "", "port": 0, "until": 0.0,
-         "server": None, "tunnel": None, "source": "camera", "fps": FPS}
+         "server": None, "tunnel": None, "source": "camera", "fps": FPS,
+         "control": False}
 # ONE capture for the whole stream, however many people are watching.
 # faces.get_frame() opens the camera, throws away six frames to let the
 # exposure settle and closes it again — 2.5 seconds a go. That is exactly
 # right for a single photo and hopeless for video: the first version of
 # this ran at well under one frame a second.
 _latest = {"jpeg": b"", "at": 0.0}
+# Where each monitor ended up INSIDE the streamed picture, so a tap at
+# (x, y) on his phone can be turned back into a point on the right screen.
+# Recorded as the frame is built rather than recalculated later — the
+# picture is padded and scaled, and guessing that mapping afterwards is how
+# remote clicks land an inch from where you meant.
+#   [{"ix","iy","iw","ih", "sx","sy","sw","sh"}]  image rect -> screen rect
+_geometry = []
 _lock = threading.Lock()
 
 PAGE = """<!doctype html><meta name=viewport content="width=device-width,initial-scale=1">
@@ -73,6 +82,92 @@ background:#111;color:#9fb}}</style>
 ASK = """<form><p>Enter the code TARS sent you.</p>
 <input name=c inputmode=numeric autocomplete=off autofocus>
 <button>Watch</button></form>"""
+
+WATCH_ONLY = """<img src="/mjpeg?c=CODE">
+<p>Watching only. Closes itself in MINS minutes.</p>"""
+
+# Touch handling, written for a phone rather than adapted from a mouse:
+#   tap                -> left click
+#   press and hold     -> right click
+#   two-finger tap     -> right click
+#   two-finger drag    -> scroll wheel
+#   tap a text box     -> the phone's keyboard opens by itself
+VIEWER = """<img id=v src="/mjpeg?c=CODE">
+<input id=kb autocomplete=off autocapitalize=off autocorrect=off
+       style="position:fixed;bottom:0;left:0;width:100%;box-sizing:border-box"
+       placeholder="tap here to type — enter sends">
+<p id=s>Control is ON. Hold = right click. Two fingers = scroll.
+Closes in MINS minutes.</p>
+<script>
+const img = document.getElementById('v'), kb = document.getElementById('kb');
+const say = t => document.getElementById('s').textContent = t;
+const send = a => fetch('/input?c=CODE', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(a)}).then(r => r.json()).catch(() => ({}));
+
+// where on the PICTURE was that, in the picture's own pixels
+function at(e){
+  const r = img.getBoundingClientRect();
+  const p = e.touches && e.touches[0] ? e.touches[0] : e;
+  return {x: (p.clientX - r.left) / r.width  * img.naturalWidth,
+          y: (p.clientY - r.top)  / r.height * img.naturalHeight};
+}
+
+let holdTimer = null, held = false, startY = 0, twoFinger = false, lastY = 0;
+
+img.addEventListener('touchstart', e => {
+  e.preventDefault();
+  held = false;
+  twoFinger = e.touches.length > 1;
+  const p = at(e); startY = lastY = (e.touches[0] || e).clientY;
+  if (!twoFinger) {
+    // press and hold is a right click — the standard phone idiom
+    holdTimer = setTimeout(() => { held = true; send({type:'rclick', ...p}); }, 500);
+  }
+}, {passive:false});
+
+img.addEventListener('touchmove', e => {
+  e.preventDefault();
+  clearTimeout(holdTimer);
+  if (e.touches.length > 1) {           // two fingers = scroll wheel
+    const y = e.touches[0].clientY, dy = y - lastY;
+    if (Math.abs(dy) > 6) { lastY = y; send({type:'scroll', dy: Math.round(dy/6), ...at(e)}); }
+  }
+}, {passive:false});
+
+img.addEventListener('touchend', async e => {
+  e.preventDefault();
+  clearTimeout(holdTimer);
+  if (held || twoFinger) { twoFinger = false; return; }
+  const p = at({clientX: e.changedTouches[0].clientX,
+                clientY: e.changedTouches[0].clientY});
+  const r = await send({type:'click', ...p});
+  // tapped something you type into? raise the keyboard without being asked
+  if (r && r.keyboard) { kb.focus(); }
+}, {passive:false});
+
+// mouse, for when he's on a laptop rather than a phone
+img.addEventListener('click', async e => {
+  if (e.detail === 0) return;
+  const r = await send({type:'click', ...at(e)});
+  if (r && r.keyboard) kb.focus();
+});
+img.addEventListener('contextmenu', e => { e.preventDefault(); send({type:'rclick', ...at(e)}); });
+img.addEventListener('wheel', e => { e.preventDefault();
+  send({type:'scroll', dy: e.deltaY > 0 ? -3 : 3, ...at(e)}); }, {passive:false});
+
+// typing: send each character as it's typed so it feels live
+kb.addEventListener('keydown', async e => {
+  if (e.key === 'Enter') { e.preventDefault();
+    const r = await send({type:'key', key:'enter'});
+    if (r && r.why) say(r.why);
+    kb.value = ''; return; }
+  if (e.key === 'Backspace') { e.preventDefault(); send({type:'key', key:'backspace'}); return; }
+  if (e.key.length === 1) { e.preventDefault();
+    const r = await send({type:'text', text: e.key});
+    if (r && r.why) say(r.why); }
+});
+</script>"""
 
 
 def live() -> bool:
@@ -110,6 +205,30 @@ class _Handler(BaseHTTPRequestHandler):
         return bool(_live["code"]) and secrets.compare_digest(
             str(code), str(_live["code"]))
 
+    def do_POST(self):  # noqa: N802
+        """Remote input. Code-checked exactly like everything else."""
+        if not live() or not self._ok():
+            self._json({"ok": False, "why": "no"}, 401)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            action = json.loads(self.rfile.read(length) or b"{}")
+        except Exception:
+            self._json({"ok": False, "why": "bad request"}, 400)
+            return
+        self._json(_do_input(action))
+
+    def _json(self, data: dict, code: int = 200):
+        body = json.dumps(data).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except OSError:
+            pass
+
     def do_GET(self):  # noqa: N802
         if not live():
             self._html("<p>Not live.</p>", 410)
@@ -120,8 +239,9 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/mjpeg"):
             self._stream()
             return
-        self._html(f'<img src="/mjpeg?c={_live["code"]}">'
-                   f'<p>Closes itself in {MINUTES} minutes.</p>')
+        body = (VIEWER if _live.get("control") else WATCH_ONLY).replace(
+            "CODE", _live["code"]).replace("MINS", str(MINUTES))
+        self._html(body)
 
     def _html(self, body: str, code: int = 200):
         page = PAGE.format(body=body).encode()
@@ -207,6 +327,15 @@ def _capture_screens_once() -> None:
                 shots.append(np.array(raw)[:, :, :3])   # BGRA -> BGR
             if not shots:
                 return
+            # remember where each monitor sits in the picture, at NATIVE size
+            # — the scale to SCREEN_WIDTH is applied to everything at the end
+            offset, native = 0, []
+            for mon, shot in zip(monitors, shots):
+                native.append({"ix": offset, "iy": 0,
+                               "iw": shot.shape[1], "ih": shot.shape[0],
+                               "sx": mon["left"], "sy": mon["top"],
+                               "sw": mon["width"], "sh": mon["height"]})
+                offset += shot.shape[1]
             if len(shots) > 1:
                 # one monitor is portrait and the other landscape — pad the
                 # shorter to match, never stretch, or everything on it is
@@ -227,6 +356,11 @@ def _capture_screens_once() -> None:
             scale = SCREEN_WIDTH / float(frame.shape[1])
             frame = cv2.resize(frame, (SCREEN_WIDTH,
                                        max(1, int(frame.shape[0] * scale))))
+            global _geometry
+            _geometry = [{**box,
+                          "ix": box["ix"] * scale, "iy": box["iy"] * scale,
+                          "iw": box["iw"] * scale, "ih": box["ih"] * scale}
+                         for box in native]
             ok, buf = cv2.imencode(".jpg", frame,
                                    [cv2.IMWRITE_JPEG_QUALITY, SCREEN_QUALITY])
             if ok:
@@ -341,6 +475,106 @@ def _capture() -> None:
         _latest["jpeg"], _latest["at"] = b"", 0.0
 
 
+def _to_screen(ix: float, iy: float) -> tuple[int, int] | None:
+    """A point on the streamed picture -> a point on the actual desktop.
+
+    Returns None for a tap on the black padding beside a shorter monitor:
+    that's not anywhere, and moving the mouse there would be a guess.
+    """
+    for box in _geometry:
+        if (box["ix"] <= ix < box["ix"] + box["iw"]
+                and box["iy"] <= iy < box["iy"] + box["ih"]):
+            fx = (ix - box["ix"]) / max(1e-6, box["iw"])
+            fy = (iy - box["iy"]) / max(1e-6, box["ih"])
+            return (int(box["sx"] + fx * box["sw"]),
+                    int(box["sy"] + fy * box["sh"]))
+    return None
+
+
+def _do_input(action: dict) -> dict:
+    """Carry out one remote action. Everything here is guarded twice: the
+    code was already checked by the caller, and control has to have been
+    switched on deliberately."""
+    if not _live.get("control"):
+        return {"ok": False, "why": "control is off"}
+
+    import pyautogui
+
+    pyautogui.FAILSAFE = False       # a corner tap must not abort everything
+    kind = str(action.get("type", ""))
+
+    if kind in ("click", "rclick", "dclick", "move", "down", "up"):
+        point = _to_screen(float(action.get("x", -1)),
+                           float(action.get("y", -1)))
+        if point is None:
+            return {"ok": False, "why": "off screen"}
+        pyautogui.moveTo(point[0], point[1])
+        if kind == "click":
+            pyautogui.click()
+        elif kind == "rclick":
+            pyautogui.click(button="right")
+        elif kind == "dclick":
+            pyautogui.doubleClick()
+        elif kind == "down":
+            pyautogui.mouseDown()
+        elif kind == "up":
+            pyautogui.mouseUp()
+        # tell the phone whether to raise its keyboard: he tapped a box you
+        # type into, so he almost certainly wants to type
+        return {"ok": True,
+                "keyboard": kind in ("click", "dclick")
+                and _caret_in_textbox()}
+
+    if kind == "scroll":
+        point = _to_screen(float(action.get("x", -1)),
+                           float(action.get("y", -1)))
+        if point:
+            pyautogui.moveTo(point[0], point[1])
+        pyautogui.scroll(int(float(action.get("dy", 0))))
+        return {"ok": True}
+
+    if kind == "text":
+        text = str(action.get("text", ""))[:500]
+        if not text:
+            return {"ok": False, "why": "nothing to type"}
+        if _messaging_focused():
+            return {"ok": False, "why": "I don't type into messaging apps"}
+        pyautogui.write(text, interval=0.01)
+        return {"ok": True}
+
+    if kind == "key":
+        key = str(action.get("key", "")).lower()
+        allowed = {"enter", "backspace", "tab", "escape", "space", "up",
+                   "down", "left", "right", "home", "end", "pageup",
+                   "pagedown", "delete"}
+        if key not in allowed:
+            return {"ok": False, "why": "key not allowed"}
+        if key == "enter" and _messaging_focused():
+            return {"ok": False, "why": "I don't send messages to people"}
+        pyautogui.press(key)
+        return {"ok": True}
+
+    return {"ok": False, "why": "unknown action"}
+
+
+def _messaging_focused() -> bool:
+    try:
+        import input_guard
+
+        return input_guard.is_messaging()
+    except Exception:
+        return False        # can't tell -> don't block ordinary typing
+
+
+def _caret_in_textbox() -> bool:
+    try:
+        import input_guard
+
+        return input_guard.caret_in_textbox()
+    except Exception:
+        return False
+
+
 def _watchdog() -> None:
     """If frames stop arriving, shut the whole thing down.
 
@@ -439,7 +673,8 @@ def _open_tunnel(port: int) -> str:
     return found[0] if found else ""
 
 
-def start(source: str = "camera", fps: int = 0) -> tuple[str, str]:
+def start(source: str = "camera", fps: int = 0,
+          control: bool = False) -> tuple[str, str]:
     """Returns (message, code). The code is sent separately, on purpose.
 
     source: "camera", "screen", "screen:left", "screen:right"
@@ -451,6 +686,9 @@ def start(source: str = "camera", fps: int = 0) -> tuple[str, str]:
         default_fps = (SCREEN_FPS if _live["source"].startswith("screen")
                        else FPS)
         _live["fps"] = max(2, min(30, fps or default_fps))
+        # control only makes sense over a screen — you cannot
+        # click on a webcam picture of a room
+        _live["control"] = bool(control) and _live["source"].startswith("screen")
         if not CLOUDFLARED.exists():
             return ("I can't put a stream online — cloudflared isn't "
                     "installed in my tools folder."), ""
@@ -476,7 +714,13 @@ def start(source: str = "camera", fps: int = 0) -> tuple[str, str]:
     what = ("this room" if _live["source"] == "camera"
             else "my screens" if _live["source"] == "screen"
             else "a screen")
-    _say(f"Live stream on. Sharing {what} for ten minutes.")
+    if _live["control"]:
+        # louder, because this is somebody able to drive the machine, not
+        # just look at it
+        _say(f"Remote control on. Sharing {what}, and whoever has the link "
+             f"can click and type on this computer for ten minutes.")
+    else:
+        _say(f"Live stream on. Sharing {what} for ten minutes.")
     return url, code
 
 

@@ -238,6 +238,18 @@ _STREAM_STATUS = re.compile(
 _STREAM_FPS = re.compile(r"\b(\d{1,2})\s*(?:fps|frames? (?:per|a) second)\b")
 
 
+_STREAM_CONTROL = re.compile(
+    r"\b(with control|and control|control it|controll?able|remote control|"
+    r"let me click|so i can click|take over|interactive)\b")
+
+
+def wants_control(lowered: str) -> bool:
+    """Did he ask to DRIVE the machine, not just watch it? Control has to be
+    asked for in words — it's the difference between someone seeing his
+    screen and someone using his computer."""
+    return bool(_STREAM_CONTROL.search(lowered))
+
+
 def wants_stream(lowered: str) -> tuple[str, str]:
     """(action, source) — action is '' when this isn't about the stream."""
     rate = _STREAM_FPS.search(lowered)
@@ -993,7 +1005,8 @@ class Brain:
 
         stream_action, stream_source = wants_stream(lowered)
         if stream_action:
-            args = {"action": stream_action, "source": stream_source or "camera"}
+            args = {"action": stream_action, "source": stream_source or "camera",
+                    "control": "true" if wants_control(lowered) else ""}
             if stream_action.startswith("fps:"):
                 args = {"action": "fps", "fps": stream_action.split(":", 1)[1]}
             result = self.skills.run("livestream", args)

@@ -46,8 +46,13 @@ def run(args: dict) -> str:
     except Exception:
         pass
 
+    control = str(args.get("control", "")).strip().lower() in (
+        "true", "yes", "1", "on", "control")
+    if control and not source.startswith("screen"):
+        source = "screen"        # you can't click on a picture of a room
+
     try:
-        url, code = livestream.start(source)
+        url, code = livestream.start(source, control=control)
     except Exception as e:
         # "an error occurred" told him nothing. Say what broke.
         livestream.stop(quiet=True)
@@ -65,5 +70,9 @@ def run(args: dict) -> str:
     what = {"screen": "both your screens",
             "screen:left": "your left screen",
             "screen:right": "your right screen"}.get(source, "the room")
+    if control:
+        return (f"Sharing {what} WITH CONTROL — tap to click, hold for right "
+                f"click, two fingers to scroll. Link and code are on your "
+                f"phone. It shuts off in {livestream.MINUTES} minutes.")
     return (f"Streaming {what}. Link and code are on your phone — it shuts "
             f"itself off in {livestream.MINUTES} minutes.")
