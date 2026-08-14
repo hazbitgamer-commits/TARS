@@ -41,6 +41,33 @@ def _named(text: str) -> str:
         return text
 
 
+# "Open setup" went to the app launcher — "I can't find anything called setup
+# installed on this PC" — and "open my settings" opened WINDOWS settings. Both
+# are reasonable guesses and both left the page holding his school login and
+# saved passwords unreachable by voice. A skill description won't reliably beat
+# "open X" meaning "launch X", so it's decided here.
+#
+# A module-level function on purpose: a gate that can't be tested on its own
+# gets tested by trying it on the real assistant, which is how over-eager
+# gates ship. The veto list is the important half — "set up a new printer"
+# must still reach the router.
+_SETUP_SUBJECT = re.compile(
+    r"\b(setup|set ?up|my (details|settings|profile|logins?|passwords?)|"
+    r"saved (logins?|passwords?)|(add|save) (a )?(login|password))\b")
+_SETUP_VERB = re.compile(
+    r"\b(open|show|bring up|go to|where|edit|change|add|save|put)\b")
+_SETUP_NOT = re.compile(
+    r"\b(new (device|phone|printer|account)|windows|wifi|bluetooth|"
+    r"display|sound|set ?up a )\b")
+
+
+def wants_setup(lowered: str) -> bool:
+    """His own setup page — not Windows settings, not a new gadget."""
+    return bool(_SETUP_SUBJECT.search(lowered)
+                and _SETUP_VERB.search(lowered)
+                and not _SETUP_NOT.search(lowered))
+
+
 def _ordinal(day: int) -> str:
     """9 -> 'th', 21 -> 'st' — TARS says dates the way people do."""
     if 11 <= day % 100 <= 13:
@@ -730,6 +757,19 @@ class Brain:
         if re.search(r"\b(open|make|start|give me)\b\s+(a|another|me a)?\s*"
                      r"\bnew tab\b|\bopen a tab\b|^new tab$", lowered):
             result = self.skills.run("tabs", {"action": "new"})
+            self.history += [{"role": "user", "content": text},
+                             {"role": "assistant", "content": result}]
+            return result
+
+        # HIS OWN SETUP PAGE. "Open setup" went to the app launcher, which
+        # said "I can't find anything called setup installed on this PC", and
+        # "open my settings" opened WINDOWS settings. Both are reasonable
+        # guesses and both are useless — the page holding his school login
+        # and saved passwords was unreachable by voice. A better skill
+        # description won't win against "open X" meaning "launch X", so this
+        # is decided here instead of being argued with the router.
+        if wants_setup(lowered):
+            result = self.skills.run("open_setup", {})
             self.history += [{"role": "user", "content": text},
                              {"role": "assistant", "content": result}]
             return result
