@@ -54,6 +54,9 @@ HELP = ("Text me like you'd talk to me:\n"
         "• any command — timers, vacuum, lists, email, designs\n"
         "• hold the mic and talk — I'll listen and answer out loud\n"
         "• send a photo — I'll look at it (homework, a sign, anything)\n"
+        "• /photo — a photo of the room, right now\n"
+        "• /clip — six seconds of video from the room\n"
+        "• /screen — what's on the PC screen (add left/right)\n"
         "• /school — today's lessons, straight from SEQTA\n"
         "• /due — what's coming up, soonest first\n"
         "• /status — how I'm doing right now\n"
@@ -131,6 +134,25 @@ def send_photo(path: Path, caption: str = "") -> bool:
                 f"https://api.telegram.org/bot{_token}/sendPhoto",
                 data={"chat_id": owner, "caption": caption[:900]},
                 files={"photo": f}, timeout=90)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+def send_video(path: Path, caption: str = "") -> bool:
+    """A short clip. Telegram wants sendVideo rather than sendPhoto, and
+    happily takes the mp4 OpenCV writes."""
+    owner = _owner()
+    if not (_token and owner and Path(path).exists()):
+        return False
+    try:
+        import requests
+
+        with open(path, "rb") as f:
+            r = requests.post(
+                f"https://api.telegram.org/bot{_token}/sendVideo",
+                data={"chat_id": owner, "caption": caption[:900]},
+                files={"video": f}, timeout=180)
         return r.status_code == 200
     except Exception:
         return False
@@ -300,6 +322,27 @@ def _command(cmd: str, chat_id: int) -> bool:
         except Exception as e:
             reply = f"Couldn't reach school: {e}"
         _api("sendMessage", chat_id=chat_id, text=reply or "Nothing due.")
+        return True
+    if low.startswith(("/photo", "/room", "/clip", "/video", "/screen")):
+        # looking at his own room or screen, from wherever he is — one
+        # deliberate capture per request, nothing continuous
+        import remote_view
+
+        _typing(chat_id, "upload_video" if low.startswith(("/clip", "/video"))
+                else "upload_photo")
+        if low.startswith(("/clip", "/video")):
+            path, note = remote_view.clip()
+            ok = send_video(path, note) if path else False
+        elif low.startswith("/screen"):
+            which = low.replace("/screen", "").strip()
+            path, note = remote_view.screen(which)
+            ok = send_photo(path, note) if path else False
+        else:
+            path, note = remote_view.photo()
+            ok = send_photo(path, note) if path else False
+        if not ok:
+            _api("sendMessage", chat_id=chat_id, text=note)
+        remote_view.tidy()
         return True
     if low.startswith("/voice"):
         want = ("off" if "off" in low else
