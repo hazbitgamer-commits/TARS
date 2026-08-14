@@ -72,13 +72,24 @@ TAG_EVERY = 2.0   # seconds between re-identifying faces
 #      800 wide, q45 -> 381 KB/s   cheap, but the text starts to go
 # 960 it is. And 12 fps, because watching a screen isn't watching a room:
 # nothing on a desktop needs thirty frames a second.
-SCREEN_WIDTH = 960
+SCREEN_WIDTH = 960          # the safe default, before a viewer says otherwise
 SCREEN_QUALITY = 45
 SCREEN_FPS = 12
+# A phone can't use more than about 960; a Mac with a big window can, and at
+# 960 the picture is 37% of native and looks soft blown up. Measured on his
+# 2560x1440 monitor at 12 fps:
+#      960 -> 195 KB/s   37% of native
+#     1280 -> 315 KB/s   50%
+#     1600 -> 466 KB/s   62%
+#     1920 -> 640 KB/s   75%   fine on wifi, too much on mobile data
+# So the VIEWER asks for what its display can actually show, and this is the
+# ceiling rather than the setting.
+SCREEN_WIDTH_MAX = 1920
+SCREEN_WIDTH_MIN = 640
 
 _live = {"on": False, "code": "", "url": "", "port": 0, "until": 0.0,
          "server": None, "tunnel": None, "source": "camera", "fps": FPS,
-         "control": False}
+         "control": False, "width": SCREEN_WIDTH}
 # ONE capture for the whole stream, however many people are watching.
 # faces.get_frame() opens the camera, throws away six frames to let the
 # exposure settle and closes it again — 2.5 seconds a go. That is exactly
@@ -110,7 +121,12 @@ html,body{{margin:0;height:100%;background:#07090d;color:#9fb;
    part you most often need, since that's where the taskbar lives. */
 #wrap{{position:fixed;left:0;right:0;top:0;bottom:var(--bar,66px);
  display:flex;align-items:center;justify-content:center}}
-img{{max-width:100%;max-height:100%;object-fit:contain;
+/* width/height 100% + contain, NOT max-width. An img with only max-width
+   never grows past its own pixel size, so on a big screen the picture sat
+   small in the middle — and since the page then asked for a stream matching
+   that small size, it shrank itself further every time. contain still
+   letterboxes correctly; it just fills the space it's given. */
+img{{width:100%;height:100%;object-fit:contain;
  touch-action:none;user-select:none;-webkit-user-drag:none;display:block}}
 p{{opacity:.65;font-size:13px;margin:8px;text-align:center}}
 input,button{{font-size:17px;padding:11px 14px;border-radius:10px;
@@ -183,7 +199,32 @@ setTimeout(()=>{tip.style.opacity=0},5000);   // the hint gets out of the way
    the bar begins — guessing a height left a sliver of desktop hidden. */
 const fit=()=>document.documentElement.style.setProperty(
   '--bar', (bar.style.display==='none' ? 0 : bar.offsetHeight) + 'px');
-addEventListener('resize', fit);
+
+/* Ask for a stream that matches what this display can actually show.
+   A phone is ~960 even at 3x; a Mac window wants 1600 and looks soft below
+   it. Sent on load, on resize and on rotate — debounced, because dragging a
+   window edge fires this constantly. */
+let sized=0, sizeTimer=null;
+function askForSize(){
+  clearTimeout(sizeTimer);
+  sizeTimer=setTimeout(async ()=>{
+    const b=shown();                 // the PICTURE's size, not the element's
+    if(!b.w) return;
+    const dpr=Math.min(devicePixelRatio||1, 2);   // 3x on a phone is wasted
+    let want=Math.round(b.w*dpr);
+    /* mobile data: stay modest whatever the screen can do */
+    const net=navigator.connection;
+    if(net && (net.saveData || /2g|3g/.test(net.effectiveType||''))) want=Math.min(want,960);
+    want=Math.max(640, Math.min(1920, want));
+    if(Math.abs(want-sized) < 120) return;        // ignore small wobbles
+    const res=await post({type:'fit', w:want});
+    if(res&&res.ok && res.width!==sized){sized=res.width; reconnect();
+                                        say('Sharpness '+res.width+'px');}
+  }, 400);
+}
+addEventListener('resize', ()=>{fit(); askForSize();});
+addEventListener('orientationchange', ()=>{fit(); askForSize();});
+img.addEventListener('load', askForSize);
 const HINT='Tap = click · hold = right click · 2 fingers = scroll · pinch = zoom';
 const SOURCE='SRC', SCREENS=NSCREENS;
 if(SCREENS<2){document.getElementById('aleft').style.display='none';
@@ -191,6 +232,14 @@ if(SCREENS<2){document.getElementById('aleft').style.display='none';
 const post=a=>fetch('/input?c=CODE',{method:'POST',
     headers:{'Content-Type':'application/json'},body:JSON.stringify(a)})
     .then(r=>r.json()).catch(()=>({}));
+
+/* A browser will drop an MJPEG connection when the frames change size, and
+   the picture goes blank — which is what happened switching monitors or
+   changing sharpness. So whenever the dimensions are about to change, take
+   a fresh connection rather than hoping the old one copes. */
+function reconnect(){
+  img.src='/mjpeg?c=CODE&t='+Date.now();
+}
 
 /* ---- zoom & pan -------------------------------------------------------- */
 let zoom=1, panX=0, panY=0;
@@ -203,12 +252,20 @@ const clampPan=()=>{const r=img.getBoundingClientRect();
   const my=Math.max(0,(r.height*1-innerHeight)/2+40);
   panY=Math.min(my,Math.max(-my,panY));};
 
-/* where on the PICTURE, in its own pixels — works at any zoom because we
-   measure the element's real on-screen box */
-function at(cx,cy){
+/* Where the PICTURE actually is on screen. The <img> fills its box, but
+   object-fit:contain letterboxes the picture inside it — so the element's
+   rectangle is NOT the picture's rectangle, and using it would put every
+   click out by the size of the black bars. */
+function shown(){
   const r=img.getBoundingClientRect();
-  return {x:(cx-r.left)/r.width*img.naturalWidth,
-          y:(cy-r.top)/r.height*img.naturalHeight};
+  const nw=img.naturalWidth||1, nh=img.naturalHeight||1;
+  const s=Math.min(r.width/nw, r.height/nh);
+  const w=nw*s, h=nh*s;
+  return {left:r.left+(r.width-w)/2, top:r.top+(r.height-h)/2, w:w, h:h, s:s};
+}
+function at(cx,cy){
+  const b=shown();
+  return {x:(cx-b.left)/b.s, y:(cy-b.top)/b.s};
 }
 function mark(cx,cy){const d=document.createElement('div');
   d.className='dot'; d.style.left=cx+'px'; d.style.top=cy+'px';
@@ -334,7 +391,8 @@ async function switchTo(step){
   if(next===current){say('No further that way'); return;}
   const r=await post({type:'monitor',which:
     next==='screen'?'both':next.split(':')[1]});
-  if(r&&r.ok){current=next; zoom=1; panX=panY=0; apply(); say(LABEL[next]);}
+  if(r&&r.ok){current=next; zoom=1; panX=panY=0; apply(); reconnect();
+              sized=0; say(LABEL[next]);}
   else say((r&&r.why)||'Could not switch');
 }
 document.getElementById('aleft').onclick=()=>switchTo(-1);
@@ -346,7 +404,7 @@ document.getElementById('bzoom').onclick=()=>{
 document.getElementById('bstop').onclick=()=>{
   post({type:'quit'}); say('Stopping…');
   setTimeout(()=>{document.body.innerHTML='<div id=wrap><p>Stopped.</p></div>';},600);};
-apply(); fit();
+apply(); fit(); askForSize();
 </script>"""
 
 
@@ -553,9 +611,11 @@ def _capture_screens_once() -> None:
             # scale the WHOLE thing once, at the end. Scaling each monitor to
             # full width first made two screens twice as wide as one, and
             # doubled the bandwidth for no extra detail.
-            scale = SCREEN_WIDTH / float(frame.shape[1])
-            frame = cv2.resize(frame, (SCREEN_WIDTH,
-                                       max(1, int(frame.shape[0] * scale))))
+            wide = int(_live.get("width") or SCREEN_WIDTH)
+            scale = wide / float(frame.shape[1])
+            frame = cv2.resize(frame, (wide,
+                                       max(1, int(frame.shape[0] * scale))),
+                               interpolation=cv2.INTER_AREA)
             global _geometry
             _geometry = [{**box,
                           "ix": box["ix"] * scale, "iy": box["iy"] * scale,
@@ -705,6 +765,19 @@ def _do_input(action: dict) -> dict:
     # because looking at a different screen of his own isn't a new power —
     # and having to stop the stream and say "share my right screen" to see
     # the other monitor was the whole complaint.
+    # The viewer telling us how big a picture its display can actually use.
+    # A phone asking for 1920 would just spend data on detail it can't show;
+    # a Mac at 960 gets a soft, blown-up picture. Only the viewer knows.
+    if str(action.get("type", "")) == "fit":
+        try:
+            want = int(float(action.get("w", 0)))
+        except (TypeError, ValueError):
+            return {"ok": False, "why": "bad width"}
+        want = max(SCREEN_WIDTH_MIN, min(SCREEN_WIDTH_MAX, want))
+        want -= want % 2          # even widths encode more cleanly
+        _live["width"] = want
+        return {"ok": True, "width": want}
+
     if str(action.get("type", "")) == "monitor":
         if not _live["source"].startswith("screen"):
             return {"ok": False, "why": "not sharing a screen"}
