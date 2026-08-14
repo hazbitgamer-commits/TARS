@@ -83,7 +83,28 @@ def _login():
     payload = data.get("payload") or {}
     if str(data.get("status", "")) not in ("200", "ok") or not payload:
         raise SeqtaError("SEQTA turned down that username and password.")
+
+    # SEQTA answers a FAILED login with an outer status of 200 and the real
+    # verdict buried in the payload: {"status": "401", "message": "Student
+    # access only"}. Checking only the outer one meant every rejected login
+    # was reported as a success — TARS said "logged in", then quietly
+    # returned an empty timetable and nothing ever due, for weeks. A wrong
+    # answer that looks right is worse than an error.
+    inner = str(payload.get("status", "")).strip()
+    if inner and inner not in ("200", "ok"):
+        note = str(payload.get("message") or "").strip()
+        raise SeqtaError(
+            f"SEQTA rejected the login ({inner}"
+            + (f": {note}" if note else "") + "). "
+            "Check the username and password on the setup page — if you've "
+            "changed your school password recently, that's why.")
+
     student = payload.get("id") or payload.get("personUUID") or 0
+    if not student:
+        raise SeqtaError(
+            "SEQTA let me in but didn't say who I am, so every request after "
+            "that gets refused. That usually means the login didn't really "
+            "take — check the username and password on the setup page.")
     return session, student
 
 

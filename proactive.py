@@ -136,6 +136,17 @@ def _check() -> None:
         pass  # never let a check-in break the voice loop
 
 
+def _morning() -> None:
+    """The briefing goes to his PHONE, not the speakers — at 7am he's in the
+    kitchen and the PC is in the bedroom, so saying it aloud reaches nobody."""
+    try:
+        import briefing
+
+        briefing.send_if_due()
+    except Exception:
+        pass
+
+
 def tick() -> None:
     global _last
     now = time.time()
@@ -143,3 +154,4 @@ def tick() -> None:
         return
     _last = now
     threading.Thread(target=_check, daemon=True).start()
+    threading.Thread(target=_morning, daemon=True).start()
