@@ -38,16 +38,16 @@ def _find_port() -> str:
         from serial.tools import list_ports
     except ImportError:
         return ""
-    best = ""
     for port in list_ports.comports():
         if port.vid in BOARD_VIDS:
             return port.device          # the hardware ID — trust this first
         blurb = f"{port.description} {port.manufacturer or ''}".lower()
         if any(h in blurb for h in HINTS):
             return port.device
-        if not best and port.device.upper().startswith("COM"):
-            best = port.device          # last resort: the first serial port
-    return best
+    # No "first COM port" fallback any more. It only ever worked by luck,
+    # and it meant plugging in any other serial device — a printer, another
+    # board — would get a tick every twenty seconds from TARS for no reason.
+    return ""
 
 
 def _open():
