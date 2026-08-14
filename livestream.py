@@ -160,8 +160,23 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 def _capture_screens() -> None:
-    """Stream the monitors instead of the camera — both side by side when
-    there are two, so he can watch the whole desk from his phone."""
+    """Stream the monitors instead of the camera.
+
+    Wrapped in a recovery loop. A single failed grab — a monitor going to
+    sleep, a resolution change, a game taking exclusive fullscreen — used to
+    kill this thread outright while the tunnel stayed up, so the picture
+    froze half-drawn and never came back. mss caches the monitor layout when
+    it's created, so recovering means building a fresh one, not retrying the
+    old.
+    """
+    while live():
+        try:
+            _capture_screens_once()
+        except Exception:
+            time.sleep(1.0)      # transient — go round and rebuild
+
+
+def _capture_screens_once() -> None:
     import cv2
     import numpy as np
 
@@ -238,6 +253,7 @@ def _capture() -> None:
     except Exception:
         faces = None
 
+    failures = 0
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
@@ -249,10 +265,26 @@ def _capture() -> None:
             return
         while live():
             started = time.time()
-            ok, frame = cap.read()
+            try:
+                ok, frame = cap.read()
+            except Exception:
+                ok, frame = False, None
             if not ok or frame is None:
+                # a webcam that's been unplugged, or grabbed by another app,
+                # must not silently end the stream — try to get it back
+                failures += 1
+                if failures > 30:
+                    failures = 0
+                    try:
+                        cap.release()
+                    except Exception:
+                        pass
+                    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
                 time.sleep(0.2)
                 continue
+            failures = 0
 
             now = time.time()
             # A clean full-size copy goes to the rest of TARS, before the
@@ -307,6 +339,26 @@ def _capture() -> None:
         except Exception:
             pass
         _latest["jpeg"], _latest["at"] = b"", 0.0
+
+
+def _watchdog() -> None:
+    """If frames stop arriving, shut the whole thing down.
+
+    The failure he hit: the capture thread died, the tunnel stayed up, and
+    the picture sat there half-drawn forever. A stream that has stopped
+    producing frames is not a stream, and leaving the tunnel open is worse
+    than useless — it's a public URL pointing at a camera with nobody
+    minding it.
+    """
+    while live():
+        time.sleep(5)
+        if not live():
+            return
+        age = time.time() - (_latest["at"] or 0)
+        if _latest["at"] and age > 20:
+            _say("The stream stopped sending pictures, so I've shut it off.")
+            stop(quiet=True)
+            return
 
 
 def _say(words: str) -> None:
@@ -420,6 +472,7 @@ def start(source: str = "camera", fps: int = 0) -> tuple[str, str]:
     _live["url"] = url
 
     threading.Timer(MINUTES * 60, lambda: stop()).start()
+    threading.Thread(target=_watchdog, daemon=True).start()
     what = ("this room" if _live["source"] == "camera"
             else "my screens" if _live["source"] == "screen"
             else "a screen")
