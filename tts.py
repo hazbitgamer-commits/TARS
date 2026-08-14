@@ -109,6 +109,16 @@ def _eleven(text: str):
     key = (os.getenv("ELEVENLABS_API_KEY") or "").strip()
     if not key:
         return None
+    # is this line worth paying for? Ten minutes a month doesn't stretch to
+    # "okay" and shopping lists — see eleven_budget.py for what it spends on
+    try:
+        import eleven_budget
+
+        ok, _why = eleven_budget.allow(text)
+        if not ok:
+            return None
+    except Exception:
+        pass
     voice_id = (os.getenv("ELEVENLABS_VOICE") or
                 "JBFqnCBsd6RMkjVDRZzb").strip()  # a calm British male
     try:
@@ -124,6 +134,12 @@ def _eleven(text: str):
             timeout=25)
         if r.status_code != 200:
             return None
+        try:  # only count what was actually generated and paid for
+            import eleven_budget
+
+            eleven_budget.record(text[:2000])
+        except Exception:
+            pass
         return sf.read(io.BytesIO(r.content), dtype="float32")
     except Exception:
         return None
