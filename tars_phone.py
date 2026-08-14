@@ -57,7 +57,9 @@ HELP = ("Text me like you'd talk to me:\n"
         "• /photo — a photo of the room, right now\n"
         "• /clip — six seconds of video from the room\n"
         "• /screen — what's on the PC screen (add left/right)\n"
-        "• /live — a live view for 10 minutes, behind a code\n"
+        "• /live — live video of the room for 10 min, behind a code\n"
+        "     /live screen · /live left · /live right — your monitors\n"
+        "     /live off — stop it now\n"
         "• /school — today's lessons, straight from SEQTA\n"
         "• /due — what's coming up, soonest first\n"
         "• /status — how I'm doing right now\n"
@@ -333,9 +335,20 @@ def _command(cmd: str, chat_id: int) -> bool:
         if "status" in low:
             _api("sendMessage", chat_id=chat_id, text=livestream.status())
             return True
+        # "/live" alone is the camera; "/live screen", "/live left",
+        # "/live right" share the monitors instead. It only ever did the
+        # camera before, with no way to ask for anything else.
+        if "left" in low:
+            source, what = "screen:left", "your left screen"
+        elif "right" in low:
+            source, what = "screen:right", "your right screen"
+        elif "screen" in low or "monitor" in low or "desktop" in low:
+            source, what = "screen", "both your screens"
+        else:
+            source, what = "camera", "the room"
         _api("sendMessage", chat_id=chat_id,
-             text="Opening a live view — give me a few seconds.")
-        url, code = livestream.start()
+             text=f"Opening a live view of {what} — give me a few seconds.")
+        url, code = livestream.start(source)
         if not code:
             _api("sendMessage", chat_id=chat_id, text=url)
             return True
