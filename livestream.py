@@ -721,22 +721,17 @@ def _capture() -> None:
                 except Exception:
                     pass
 
-            if faces is not None and now - tagged_at > TAG_EVERY:
-                tagged_at = now
-                try:
-                    tags = faces.identify(frame, wait=False)
-                except Exception:
-                    tags = []
-
+            # Track on the SCALED-DOWN frame, not the full-size one: at 640
+            # wide it's a quarter of the pixels, the overlay looks identical,
+            # and the phone gets skeletons for almost nothing.
             scale = WIDTH / float(frame.shape[1])
             small = cv2.resize(frame, (WIDTH, int(frame.shape[0] * scale)))
-            for tag in tags:
-                x, y, w, h = (int(v * scale) for v in tag["box"])
-                label = tag["name"] or "unknown"
-                colour = (80, 220, 120) if tag["name"] else (120, 120, 200)
-                cv2.rectangle(small, (x, y), (x + w, y + h), colour, 2)
-                cv2.putText(small, label, (x, max(16, y - 8)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, colour, 2)
+            try:
+                import vision_track
+
+                vision_track.annotate(small)
+            except Exception:
+                pass
 
             ok_enc, buf = cv2.imencode(".jpg", small,
                                        [cv2.IMWRITE_JPEG_QUALITY, QUALITY])

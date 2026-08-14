@@ -654,20 +654,18 @@ class Handler(BaseHTTPRequestHandler):
                                          [cv2.IMWRITE_JPEG_QUALITY, 80])
                 if ok:
                     LATEST_JPEG = (time.time(), clean.tobytes())
-                # nametags: refresh every ~2s, never block the feed on loading
+                # Skeletons, hands, face mesh and names — about 22ms, so it
+                # keeps up with the feed instead of trailing it. The old code
+                # here ran DeepFace every 30 frames and drew a plain box; the
+                # box lagged two seconds behind his head, because DeepFace
+                # answers "who is this", not "where is this".
                 frame_n += 1
-                if faces is not None and frame_n % 30 == 1:
-                    try:
-                        tags = faces.identify(frame, wait=False)
-                    except Exception:
-                        tags = []
-                for t in tags:
-                    x, y, w, h = t["box"]
-                    label = t["name"] or "unknown"
-                    color = (80, 220, 120) if t["name"] else (120, 120, 200)
-                    cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-                    cv2.putText(frame, label, (x, max(20, y - 10)),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+                try:
+                    import vision_track
+
+                    vision_track.annotate(frame)
+                except Exception:
+                    pass
                 ok, jpg = cv2.imencode(".jpg", frame,
                                        [cv2.IMWRITE_JPEG_QUALITY, 75])
                 if not ok:
