@@ -89,7 +89,7 @@ SCREEN_WIDTH_MIN = 640
 
 _live = {"on": False, "code": "", "url": "", "port": 0, "until": 0.0,
          "server": None, "tunnel": None, "source": "camera", "fps": FPS,
-         "control": False, "width": SCREEN_WIDTH}
+         "control": False, "width": SCREEN_WIDTH, "gen": 0}
 # ONE capture for the whole stream, however many people are watching.
 # faces.get_frame() opens the camera, throws away six frames to let the
 # exposure settle and closes it again — 2.5 seconds a go. That is exactly
@@ -365,18 +365,37 @@ function showKb(on){
 }
 document.getElementById('bkb').onclick=()=>showKb(true);
 kb.addEventListener('blur',()=>showKb(false));
+/* Typed characters are BUFFERED and sent in batches.
+   One request per keystroke floods the browser's connection pool — it only
+   allows about six at once, and the video is permanently holding one of
+   them — so typing a command starved the stream and the picture froze while
+   clicks carried on working. A batch every 90ms feels identical to type
+   and uses a fraction of the connections. */
+let typed='', typeTimer=null;
+function flushTyping(){
+  clearTimeout(typeTimer); typeTimer=null;
+  if(!typed) return Promise.resolve({});
+  const batch=typed; typed='';
+  return post({type:'text',text:batch}).then(r=>{if(r&&r.why) say(r.why); return r;});
+}
+function queueType(ch){
+  typed+=ch;
+  if(!typeTimer) typeTimer=setTimeout(flushTyping,90);
+}
 kb.addEventListener('keydown',async e=>{
   if(e.key==='Enter'){e.preventDefault();
+    await flushTyping();               /* the text must land BEFORE enter */
     const r=await post({type:'key',key:'enter'});
     if(r&&r.why) say(r.why); kb.value=''; return;}
-  if(e.key==='Backspace'){e.preventDefault(); post({type:'key',key:'backspace'}); return;}
-  if(e.key.length===1){e.preventDefault();
-    const r=await post({type:'text',text:e.key});
-    if(r&&r.why) say(r.why);}
+  if(e.key==='Backspace'){e.preventDefault();
+    if(typed){typed=typed.slice(0,-1); return;}   /* not yet sent — just drop it */
+    post({type:'key',key:'backspace'}); return;}
+  if(e.key.length===1){e.preventDefault(); queueType(e.key);}
 });
-/* phone autocorrect fires input events rather than keydown */
+/* phone autocorrect and predictive text fire input events, not keydown */
 kb.addEventListener('input',()=>{const v=kb.value; if(!v) return;
-  kb.value=''; post({type:'text',text:v});});
+  kb.value=''; queueType(v);});
+kb.addEventListener('blur',flushTyping);
 
 /* ---- which monitor ----------------------------------------------------- */
 /* left -> both -> right -> both -> left ... so "both" is always one tap
@@ -542,14 +561,15 @@ def _capture_screens() -> None:
     it's created, so recovering means building a fresh one, not retrying the
     old.
     """
-    while live():
+    mine = _live["gen"]
+    while live() and _live["gen"] == mine:
         try:
-            _capture_screens_once()
+            _capture_screens_once(mine)
         except Exception:
             time.sleep(1.0)      # transient — go round and rebuild
 
 
-def _capture_screens_once() -> None:
+def _capture_screens_once(mine: int = None) -> None:
     import cv2
     import numpy as np
 
@@ -576,7 +596,8 @@ def _capture_screens_once() -> None:
             # he switched monitors with the on-screen arrows: drop out and
             # let the outer loop rebuild against the new one. mss caches the
             # layout, so this can't be changed in place.
-            if _live["source"] != want:
+            if _live["source"] != want or (mine is not None
+                                           and _live["gen"] != mine):
                 return
             started = time.time()
             shots = []
@@ -647,6 +668,7 @@ def _capture() -> None:
     except Exception:
         faces = None
 
+    mine = _live["gen"]
     failures = 0
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
@@ -657,7 +679,7 @@ def _capture() -> None:
     try:
         if not cap.isOpened():
             return
-        while live():
+        while live() and _live["gen"] == mine:
             started = time.time()
             try:
                 ok, frame = cap.read()
@@ -870,23 +892,43 @@ def _caret_in_textbox() -> bool:
 
 
 def _watchdog() -> None:
-    """If frames stop arriving, shut the whole thing down.
+    """Keep frames flowing — and if they truly can't, shut down cleanly.
 
-    The failure he hit: the capture thread died, the tunnel stayed up, and
-    the picture sat there half-drawn forever. A stream that has stopped
-    producing frames is not a stream, and leaving the tunnel open is worse
-    than useless — it's a public URL pointing at a camera with nobody
-    minding it.
+    Two stages, because dying was too blunt a response to a stumble:
+
+      after 3s of no frames  -> restart the capture. A UAC prompt on the
+        secure desktop, a game going exclusive fullscreen, or a display
+        change all stop the grab; none of them are reasons to end a stream
+        he's using. He hit this as a frozen picture that still took clicks.
+
+      after 25s              -> give up, say so, and close the tunnel. A
+        public URL pointing at a camera that isn't working is worse than
+        no stream at all.
     """
+    restarts = 0
     while live():
-        time.sleep(5)
+        time.sleep(2)
         if not live():
             return
         age = time.time() - (_latest["at"] or 0)
-        if _latest["at"] and age > 20:
+        if not _latest["at"] or age < 3:
+            restarts = 0
+            continue
+
+        if age > 25:
             _say("The stream stopped sending pictures, so I've shut it off.")
             stop(quiet=True)
             return
+
+        # nudge it: the capture loops exit when the source changes, so
+        # flipping it to itself makes them rebuild
+        restarts += 1
+        if restarts <= 4:
+            _live["gen"] += 1          # the stuck loop exits when it notices
+            grab = (_capture_screens if _live["source"].startswith("screen")
+                    else _capture)
+            threading.Thread(target=grab, daemon=True).start()
+            time.sleep(2)
 
 
 def _say(words: str) -> None:
