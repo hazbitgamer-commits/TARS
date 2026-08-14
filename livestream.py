@@ -127,6 +127,14 @@ button:active{{background:#1b2a22}}
 #tip{{position:fixed;top:0;left:0;right:0;padding:5px;font-size:12px;
  background:#07090dcc;text-align:center;transition:opacity .6s;
  pointer-events:none}}
+/* monitor switchers: at the edges, where a thumb already is */
+.arrow{{position:fixed;top:50%;transform:translateY(-50%);width:42px;
+ height:62px;display:flex;align-items:center;justify-content:center;
+ font-size:24px;line-height:1;border-radius:12px;z-index:5;
+ background:#0b0e13cc;border:1px solid #2c3b33;color:#9fb;opacity:.55}}
+.arrow:active{{opacity:1;background:#1b2a22}}
+#aleft{{left:calc(4px + env(safe-area-inset-left))}}
+#aright{{right:calc(4px + env(safe-area-inset-right))}}
 .dot{{position:fixed;width:26px;height:26px;margin:-13px 0 0 -13px;
  border:2px solid #6fe3a4;border-radius:50%;pointer-events:none;
  animation:pop .45s ease-out forwards}}
@@ -154,6 +162,8 @@ WATCH_ONLY = """<div id=wrap><img src="/mjpeg?c=CODE"></div>
 # top or bottom of the desktop. Now it's fitted to the viewport and you
 # pinch in for detail.
 VIEWER = """<div id=wrap><img id=v src="/mjpeg?c=CODE"></div>
+<button class=arrow id=aleft>&#9664;</button>
+<button class=arrow id=aright>&#9654;</button>
 <div id=tip>Tap = click · hold = right click · 2 fingers = scroll · pinch = zoom</div>
 <input id=kb autocomplete=off autocapitalize=off autocorrect=off
        spellcheck=false placeholder="type here — enter sends">
@@ -175,6 +185,9 @@ const fit=()=>document.documentElement.style.setProperty(
   '--bar', (bar.style.display==='none' ? 0 : bar.offsetHeight) + 'px');
 addEventListener('resize', fit);
 const HINT='Tap = click · hold = right click · 2 fingers = scroll · pinch = zoom';
+const SOURCE='SRC', SCREENS=NSCREENS;
+if(SCREENS<2){document.getElementById('aleft').style.display='none';
+              document.getElementById('aright').style.display='none';}
 const post=a=>fetch('/input?c=CODE',{method:'POST',
     headers:{'Content-Type':'application/json'},body:JSON.stringify(a)})
     .then(r=>r.json()).catch(()=>({}));
@@ -308,6 +321,25 @@ kb.addEventListener('keydown',async e=>{
 kb.addEventListener('input',()=>{const v=kb.value; if(!v) return;
   kb.value=''; post({type:'text',text:v});});
 
+/* ---- which monitor ----------------------------------------------------- */
+/* left -> both -> right -> both -> left ... so "both" is always one tap
+   away from either single screen, and you can never get stuck */
+const ORDER=['screen:left','screen','screen:right'];
+const LABEL={'screen:left':'Left screen','screen':'Both screens',
+             'screen:right':'Right screen'};
+let current=SOURCE;
+async function switchTo(step){
+  const i=ORDER.indexOf(current);
+  const next=ORDER[Math.min(ORDER.length-1,Math.max(0,(i<0?1:i)+step))];
+  if(next===current){say('No further that way'); return;}
+  const r=await post({type:'monitor',which:
+    next==='screen'?'both':next.split(':')[1]});
+  if(r&&r.ok){current=next; zoom=1; panX=panY=0; apply(); say(LABEL[next]);}
+  else say((r&&r.why)||'Could not switch');
+}
+document.getElementById('aleft').onclick=()=>switchTo(-1);
+document.getElementById('aright').onclick=()=>switchTo(1);
+
 document.getElementById('bzoom').onclick=()=>{
   if(zoom>1.02){zoom=1;panX=panY=0;} else {zoom=2;}
   clampPan(); apply();};
@@ -327,6 +359,18 @@ def status() -> str:
         return "The live stream is off."
     left = int((_live["until"] - time.time()) / 60) + 1
     return f"Live now — about {left} minute{'s' if left != 1 else ''} left."
+
+
+def _monitor_count() -> int:
+    """How many screens there are — so the switch arrows only appear on a
+    machine that has something to switch to."""
+    try:
+        import mss
+
+        with mss.mss() as sct:
+            return max(1, len(sct.monitors) - 1)
+    except Exception:
+        return 1
 
 
 def _free_port() -> int:
@@ -387,8 +431,11 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/mjpeg"):
             self._stream()
             return
-        body = (VIEWER if _live.get("control") else WATCH_ONLY).replace(
-            "CODE", _live["code"]).replace("MINS", str(MINUTES))
+        body = ((VIEWER if _live.get("control") else WATCH_ONLY)
+                .replace("CODE", _live["code"])
+                .replace("MINS", str(MINUTES))
+                .replace("NSCREENS", str(_monitor_count()))
+                .replace("SRC", _live["source"]))
         self._html(body)
 
     def _html(self, body: str, code: int = 200):
@@ -468,6 +515,11 @@ def _capture_screens_once() -> None:
         elif want.endswith("right") and len(monitors) > 1:
             monitors = monitors[-1:]
         while live():
+            # he switched monitors with the on-screen arrows: drop out and
+            # let the outer loop rebuild against the new one. mss caches the
+            # layout, so this can't be changed in place.
+            if _live["source"] != want:
+                return
             started = time.time()
             shots = []
             for mon in monitors:
@@ -648,6 +700,21 @@ def _do_input(action: dict) -> dict:
     if str(action.get("type", "")) == "quit":
         threading.Thread(target=stop, daemon=True).start()
         return {"ok": True}
+
+    # Switching which monitor he's looking at. Allowed without control,
+    # because looking at a different screen of his own isn't a new power —
+    # and having to stop the stream and say "share my right screen" to see
+    # the other monitor was the whole complaint.
+    if str(action.get("type", "")) == "monitor":
+        if not _live["source"].startswith("screen"):
+            return {"ok": False, "why": "not sharing a screen"}
+        which = str(action.get("which", "")).lower()
+        wanted = {"left": "screen:left", "right": "screen:right",
+                  "both": "screen"}.get(which)
+        if not wanted:
+            return {"ok": False, "why": "which monitor?"}
+        _live["source"] = wanted
+        return {"ok": True, "source": wanted}
 
     if not _live.get("control"):
         return {"ok": False, "why": "control is off"}
