@@ -23,18 +23,39 @@ MESSAGING = (
 
 
 def focused_title() -> str:
-    try:
-        import uiautomation as auto
+    """The front window's title, on Windows or a Mac.
 
-        return (auto.GetForegroundControl().GetTopLevelControl().Name
-                or "").lower()
-    except Exception:
+    uiautomation is Windows-only, so without the fallbacks this guard simply
+    didn't exist on his mate's Mac — and a guard that silently isn't there
+    is worse than no guard, because you think you have one.
+    """
+    import sys
+
+    if sys.platform == "win32":
         try:
-            import pyautogui
+            import uiautomation as auto
 
-            return (pyautogui.getActiveWindowTitle() or "").lower()
+            return (auto.GetForegroundControl().GetTopLevelControl().Name
+                    or "").lower()
         except Exception:
-            return ""
+            pass
+    if sys.platform == "darwin":
+        try:
+            import subprocess
+
+            script = ('tell application "System Events" to get name of '
+                      'first application process whose frontmost is true')
+            out = subprocess.run(["osascript", "-e", script],
+                                 capture_output=True, text=True, timeout=5)
+            return (out.stdout or "").strip().lower()
+        except Exception:
+            pass
+    try:
+        import pygetwindow
+
+        return (pygetwindow.getActiveWindowTitle() or "").lower()
+    except Exception:
+        return ""
 
 
 def is_messaging(title: str = None) -> bool:

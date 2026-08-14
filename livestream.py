@@ -28,7 +28,30 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
-CLOUDFLARED = BASE / "tools" / "cloudflared.exe"
+
+
+def _cloudflared() -> Path:
+    """The tunnel binary, whichever machine this is.
+
+    TARS runs on his Windows PC and on his mate's Mac, so hard-coding the
+    .exe meant the whole feature was Windows-only for no reason. A Mac or
+    Linux copy just needs the matching binary dropped in tools/, or one
+    already on PATH.
+    """
+    import shutil
+    import sys
+
+    names = (["cloudflared.exe"] if sys.platform == "win32"
+             else ["cloudflared"])
+    for name in names:
+        local = BASE / "tools" / name
+        if local.exists():
+            return local
+    found = shutil.which("cloudflared")
+    return Path(found) if found else BASE / "tools" / names[0]
+
+
+CLOUDFLARED = _cloudflared()
 
 MINUTES = 10
 # the webcam tops out at 29.3 fps at 1280x720, so 30 is the real ceiling
@@ -71,102 +94,213 @@ _latest = {"jpeg": b"", "at": 0.0}
 _geometry = []
 _lock = threading.Lock()
 
-PAGE = """<!doctype html><meta name=viewport content="width=device-width,initial-scale=1">
+PAGE = """<!doctype html><html><head>
+<meta name=viewport content="width=device-width,initial-scale=1,\
+maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <title>TARS</title>
-<style>body{{margin:0;background:#0b0e13;color:#9fb;font-family:system-ui;
-text-align:center}}img{{max-width:100%;height:auto}}p{{opacity:.6;font-size:14px}}
-input,button{{font-size:18px;padding:10px;border-radius:8px;border:1px solid #2a3;
-background:#111;color:#9fb}}</style>
-<h3>TARS — live</h3>{body}"""
+<style>
+*{{box-sizing:border-box;-webkit-tap-highlight-color:transparent}}
+html,body{{margin:0;height:100%;background:#07090d;color:#9fb;
+ font-family:-apple-system,system-ui,Segoe UI,Roboto,sans-serif;
+ overflow:hidden;overscroll-behavior:none}}
+/* 100dvh, not 100vh: on a phone the address bar and the on-screen keyboard
+   both change the usable height, and vh doesn't notice either */
+#wrap{{position:fixed;inset:0;display:flex;align-items:center;
+ justify-content:center;height:100dvh}}
+img{{max-width:100%;max-height:100%;object-fit:contain;
+ touch-action:none;user-select:none;-webkit-user-drag:none;display:block}}
+p{{opacity:.65;font-size:13px;margin:8px;text-align:center}}
+input,button{{font-size:17px;padding:11px 14px;border-radius:10px;
+ border:1px solid #2c3b33;background:#10161b;color:#9fb;font-family:inherit}}
+button:active{{background:#1b2a22}}
+#bar{{position:fixed;left:0;right:0;bottom:0;display:flex;gap:8px;
+ padding:9px calc(9px + env(safe-area-inset-left))
+ calc(9px + env(safe-area-inset-bottom)) 9px;
+ background:linear-gradient(transparent,#07090dcc 35%)}}
+#bar button{{flex:1;min-height:48px}}   /* 48px: a thumb, not a cursor */
+#kb{{position:fixed;left:8px;right:8px;bottom:8px;display:none}}
+#tip{{position:fixed;top:0;left:0;right:0;padding:6px;font-size:12px;
+ background:#07090dcc;text-align:center}}
+.dot{{position:fixed;width:26px;height:26px;margin:-13px 0 0 -13px;
+ border:2px solid #6fe3a4;border-radius:50%;pointer-events:none;
+ animation:pop .45s ease-out forwards}}
+@keyframes pop{{from{{transform:scale(.3);opacity:.9}}
+ to{{transform:scale(1.5);opacity:0}}}}
+</style></head><body>{body}</body></html>"""
 
-ASK = """<form><p>Enter the code TARS sent you.</p>
-<input name=c inputmode=numeric autocomplete=off autofocus>
-<button>Watch</button></form>"""
+ASK = """<div id=wrap><form style="display:grid;gap:12px;padding:20px">
+<p>Enter the code TARS sent you.</p>
+<input name=c inputmode=numeric autocomplete=off autofocus
+       style="text-align:center;letter-spacing:6px;font-size:26px">
+<button>Watch</button></form></div>"""
 
-WATCH_ONLY = """<img src="/mjpeg?c=CODE">
-<p>Watching only. Closes itself in MINS minutes.</p>"""
+WATCH_ONLY = """<div id=wrap><img src="/mjpeg?c=CODE"></div>
+<div id=tip>Watching only — closes in MINS minutes</div>"""
 
-# Touch handling, written for a phone rather than adapted from a mouse:
-#   tap                -> left click
-#   press and hold     -> right click
-#   two-finger tap     -> right click
-#   two-finger drag    -> scroll wheel
-#   tap a text box     -> the phone's keyboard opens by itself
-VIEWER = """<img id=v src="/mjpeg?c=CODE">
+# The viewer. Rebuilt for a phone held in one hand, not a desktop shrunk down.
+#
+#   tap                  left click            pinch          zoom in/out
+#   press and hold       right click           drag (zoomed)  pan
+#   two fingers, drag    scroll                buttons        keyboard, zoom, stop
+#
+# The whole screen always fits: a portrait monitor streams as a 960x1706
+# picture, and on a phone that ran off both ends with no way to reach the
+# top or bottom of the desktop. Now it's fitted to the viewport and you
+# pinch in for detail.
+VIEWER = """<div id=wrap><img id=v src="/mjpeg?c=CODE"></div>
+<div id=tip>Tap = click · hold = right click · 2 fingers = scroll · pinch = zoom</div>
 <input id=kb autocomplete=off autocapitalize=off autocorrect=off
-       style="position:fixed;bottom:0;left:0;width:100%;box-sizing:border-box"
-       placeholder="tap here to type — enter sends">
-<p id=s>Control is ON. Hold = right click. Two fingers = scroll.
-Closes in MINS minutes.</p>
+       spellcheck=false placeholder="type here — enter sends">
+<div id=bar>
+  <button id=bkb>Keyboard</button>
+  <button id=bzoom>Fit</button>
+  <button id=bstop>Stop</button>
+</div>
 <script>
-const img = document.getElementById('v'), kb = document.getElementById('kb');
-const say = t => document.getElementById('s').textContent = t;
-const send = a => fetch('/input?c=CODE', {method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify(a)}).then(r => r.json()).catch(() => ({}));
+const img=document.getElementById('v'), kb=document.getElementById('kb'),
+      tip=document.getElementById('tip'), bar=document.getElementById('bar');
+const say=t=>{tip.textContent=t; clearTimeout(say.t);
+              say.t=setTimeout(()=>tip.textContent=HINT,2600)};
+const HINT='Tap = click · hold = right click · 2 fingers = scroll · pinch = zoom';
+const post=a=>fetch('/input?c=CODE',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(a)})
+    .then(r=>r.json()).catch(()=>({}));
 
-// where on the PICTURE was that, in the picture's own pixels
-function at(e){
-  const r = img.getBoundingClientRect();
-  const p = e.touches && e.touches[0] ? e.touches[0] : e;
-  return {x: (p.clientX - r.left) / r.width  * img.naturalWidth,
-          y: (p.clientY - r.top)  / r.height * img.naturalHeight};
+/* ---- zoom & pan -------------------------------------------------------- */
+let zoom=1, panX=0, panY=0;
+const apply=()=>{img.style.transform=
+  `translate(${panX}px,${panY}px) scale(${zoom})`;
+  document.getElementById('bzoom').textContent = zoom>1.02?'Fit':'Zoom';};
+const clampPan=()=>{const r=img.getBoundingClientRect();
+  const mx=Math.max(0,(r.width*1-innerWidth)/2+40);
+  panX=Math.min(mx,Math.max(-mx,panX));
+  const my=Math.max(0,(r.height*1-innerHeight)/2+40);
+  panY=Math.min(my,Math.max(-my,panY));};
+
+/* where on the PICTURE, in its own pixels — works at any zoom because we
+   measure the element's real on-screen box */
+function at(cx,cy){
+  const r=img.getBoundingClientRect();
+  return {x:(cx-r.left)/r.width*img.naturalWidth,
+          y:(cy-r.top)/r.height*img.naturalHeight};
+}
+function mark(cx,cy){const d=document.createElement('div');
+  d.className='dot'; d.style.left=cx+'px'; d.style.top=cy+'px';
+  document.body.appendChild(d); setTimeout(()=>d.remove(),460);}
+
+/* ---- scrolling --------------------------------------------------------- */
+/* Every action is a round trip through Cloudflare, so sending a click per
+   6 pixels made scrolling crawl. Movement is accumulated and flushed on a
+   timer, as one bigger scroll — far fewer requests, far more travel. */
+let pending=0, flushing=null;
+function scrollBy(px,cx,cy){
+  pending += px;
+  if(flushing) return;
+  flushing=setTimeout(()=>{
+    const notches=Math.round(pending/2.2);   // was /6 — this is the speed
+    pending=0; flushing=null;
+    if(notches) post({type:'scroll',dy:notches,...at(cx,cy)});
+  },55);
 }
 
-let holdTimer = null, held = false, startY = 0, twoFinger = false, lastY = 0;
+/* ---- touch ------------------------------------------------------------- */
+let hold=null, held=false, moved=0, startX=0, startY=0,
+    lastY=0, pinchFrom=0, zoomFrom=1, fingers=0, panning=false;
 
-img.addEventListener('touchstart', e => {
-  e.preventDefault();
-  held = false;
-  twoFinger = e.touches.length > 1;
-  const p = at(e); startY = lastY = (e.touches[0] || e).clientY;
-  if (!twoFinger) {
-    // press and hold is a right click — the standard phone idiom
-    holdTimer = setTimeout(() => { held = true; send({type:'rclick', ...p}); }, 500);
+img.addEventListener('touchstart',e=>{
+  e.preventDefault(); fingers=e.touches.length; held=false; moved=0;
+  const t=e.touches[0]; startX=t.clientX; startY=lastY=t.clientY;
+  if(fingers===2){
+    clearTimeout(hold);
+    const [a,b]=e.touches;
+    pinchFrom=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
+    zoomFrom=zoom; return;
   }
-}, {passive:false});
+  panning = zoom>1.02;
+  hold=setTimeout(()=>{held=true; mark(startX,startY);
+    post({type:'rclick',...at(startX,startY)}); say('Right click');},480);
+},{passive:false});
 
-img.addEventListener('touchmove', e => {
+img.addEventListener('touchmove',e=>{
   e.preventDefault();
-  clearTimeout(holdTimer);
-  if (e.touches.length > 1) {           // two fingers = scroll wheel
-    const y = e.touches[0].clientY, dy = y - lastY;
-    if (Math.abs(dy) > 6) { lastY = y; send({type:'scroll', dy: Math.round(dy/6), ...at(e)}); }
+  const t=e.touches[0];
+  moved=Math.max(moved,Math.hypot(t.clientX-startX,t.clientY-startY));
+  if(moved>12) clearTimeout(hold);
+
+  if(e.touches.length===2){
+    const [a,b]=e.touches;
+    const now=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
+    /* pinch if the gap is changing, otherwise it's a two-finger scroll */
+    if(pinchFrom && Math.abs(now-pinchFrom)>28){
+      zoom=Math.min(4,Math.max(1,zoomFrom*(now/pinchFrom)));
+      if(zoom<=1.02){zoom=1;panX=panY=0;}
+      clampPan(); apply(); return;
+    }
+    const dy=t.clientY-lastY; lastY=t.clientY;
+    if(Math.abs(dy)>1) scrollBy(dy,t.clientX,t.clientY);
+    return;
   }
-}, {passive:false});
+  if(panning && zoom>1.02){
+    panX+=t.clientX-startX; panY+=t.clientY-startY;
+    startX=t.clientX; startY=t.clientY; clampPan(); apply();
+  }
+},{passive:false});
 
-img.addEventListener('touchend', async e => {
-  e.preventDefault();
-  clearTimeout(holdTimer);
-  if (held || twoFinger) { twoFinger = false; return; }
-  const p = at({clientX: e.changedTouches[0].clientX,
-                clientY: e.changedTouches[0].clientY});
-  const r = await send({type:'click', ...p});
-  // tapped something you type into? raise the keyboard without being asked
-  if (r && r.keyboard) { kb.focus(); }
-}, {passive:false});
+img.addEventListener('touchend',async e=>{
+  e.preventDefault(); clearTimeout(hold);
+  const was=fingers; fingers=e.touches.length;
+  if(held||was>1||moved>12||panning) return;
+  const t=e.changedTouches[0];
+  mark(t.clientX,t.clientY);
+  const r=await post({type:'click',...at(t.clientX,t.clientY)});
+  if(r&&r.why) say(r.why);
+  if(r&&r.keyboard) showKb(true);
+},{passive:false});
 
-// mouse, for when he's on a laptop rather than a phone
-img.addEventListener('click', async e => {
-  if (e.detail === 0) return;
-  const r = await send({type:'click', ...at(e)});
-  if (r && r.keyboard) kb.focus();
+/* ---- mouse & trackpad (Mac, Windows, any laptop) ----------------------- */
+img.addEventListener('click',async e=>{
+  if(e.detail===0) return;
+  mark(e.clientX,e.clientY);
+  const r=await post({type:'click',...at(e.clientX,e.clientY)});
+  if(r&&r.why) say(r.why);
+  if(r&&r.keyboard) showKb(true);
 });
-img.addEventListener('contextmenu', e => { e.preventDefault(); send({type:'rclick', ...at(e)}); });
-img.addEventListener('wheel', e => { e.preventDefault();
-  send({type:'scroll', dy: e.deltaY > 0 ? -3 : 3, ...at(e)}); }, {passive:false});
+img.addEventListener('dblclick',e=>{e.preventDefault();
+  post({type:'dclick',...at(e.clientX,e.clientY)});});
+img.addEventListener('contextmenu',e=>{e.preventDefault();
+  mark(e.clientX,e.clientY); post({type:'rclick',...at(e.clientX,e.clientY)});});
+/* a Mac trackpad sends many small deltas — accumulate them like touch */
+img.addEventListener('wheel',e=>{e.preventDefault();
+  scrollBy(-e.deltaY,e.clientX,e.clientY);},{passive:false});
 
-// typing: send each character as it's typed so it feels live
-kb.addEventListener('keydown', async e => {
-  if (e.key === 'Enter') { e.preventDefault();
-    const r = await send({type:'key', key:'enter'});
-    if (r && r.why) say(r.why);
-    kb.value = ''; return; }
-  if (e.key === 'Backspace') { e.preventDefault(); send({type:'key', key:'backspace'}); return; }
-  if (e.key.length === 1) { e.preventDefault();
-    const r = await send({type:'text', text: e.key});
-    if (r && r.why) say(r.why); }
+/* ---- keyboard ---------------------------------------------------------- */
+function showKb(on){
+  kb.style.display = on ? 'block' : 'none';
+  bar.style.display = on ? 'none' : 'flex';
+  if(on) kb.focus(); else kb.blur();
+}
+document.getElementById('bkb').onclick=()=>showKb(true);
+kb.addEventListener('blur',()=>showKb(false));
+kb.addEventListener('keydown',async e=>{
+  if(e.key==='Enter'){e.preventDefault();
+    const r=await post({type:'key',key:'enter'});
+    if(r&&r.why) say(r.why); kb.value=''; return;}
+  if(e.key==='Backspace'){e.preventDefault(); post({type:'key',key:'backspace'}); return;}
+  if(e.key.length===1){e.preventDefault();
+    const r=await post({type:'text',text:e.key});
+    if(r&&r.why) say(r.why);}
 });
+/* phone autocorrect fires input events rather than keydown */
+kb.addEventListener('input',()=>{const v=kb.value; if(!v) return;
+  kb.value=''; post({type:'text',text:v});});
+
+document.getElementById('bzoom').onclick=()=>{
+  if(zoom>1.02){zoom=1;panX=panY=0;} else {zoom=2;}
+  clampPan(); apply();};
+document.getElementById('bstop').onclick=()=>{
+  post({type:'quit'}); say('Stopping…');
+  setTimeout(()=>{document.body.innerHTML='<div id=wrap><p>Stopped.</p></div>';},600);};
+apply();
 </script>"""
 
 
@@ -495,6 +629,12 @@ def _do_input(action: dict) -> dict:
     """Carry out one remote action. Everything here is guarded twice: the
     code was already checked by the caller, and control has to have been
     switched on deliberately."""
+    # stopping is allowed even without control — the way out must never be
+    # harder to reach than the way in
+    if str(action.get("type", "")) == "quit":
+        threading.Thread(target=stop, daemon=True).start()
+        return {"ok": True}
+
     if not _live.get("control"):
         return {"ok": False, "why": "control is off"}
 
@@ -619,14 +759,22 @@ def _kill_strays() -> None:
     """
     import subprocess
 
+    import os
+    import signal
+    import sys
+
     try:
         pid = int(PIDFILE.read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
         return
     try:
-        subprocess.run(["taskkill", "/PID", str(pid), "/F"],
-                       capture_output=True, timeout=10,
-                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/PID", str(pid), "/F"],
+                           capture_output=True, timeout=10,
+                           creationflags=getattr(subprocess,
+                                                 "CREATE_NO_WINDOW", 0))
+        else:
+            os.kill(pid, signal.SIGTERM)
     except Exception:
         pass
     PIDFILE.unlink(missing_ok=True)
