@@ -25,6 +25,13 @@ ARGS = {"number": "the phone number, or a name from your contacts",
         "action": "'history' to hear recent calls"}
 
 
+# ways he refers to his own phone. Deliberately an exact list rather than
+# "starts with my" — "my barber" is somebody else.
+SELF = {"me", "myself", "my mobile", "my phone", "my number", "my cell",
+        "my mobile phone", "my own phone", "my own number", "this phone",
+        "my mobile number"}
+
+
 def _contacts() -> dict:
     """Names he's told TARS, e.g. 'mum'. Lives with the profile, never
     published."""
@@ -58,22 +65,43 @@ def run(args: dict) -> str:
         return ("I won't dial emergency services — that's blocked in me for "
                 "good. If it's an emergency, call 000 yourself right now.")
 
+    mode = str(args.get("mode") or "bridge").strip().lower()
+    message = str(args.get("message") or "").strip()
+
     name = ""
     if not re.search(r"\d", raw):
-        book = _contacts()
-        match = next((k for k in book if k.lower() in raw.lower()), "")
-        if not match:
-            return (f"I don't have a number for {raw}. Say it with the "
-                    f"number and I'll remember it.")
-        name, raw = match, str(book[match])
+        # "call me" / "call my mobile" — his own number is already in the
+        # profile, and looking for it in the CONTACTS book was never going
+        # to find it. This is the first thing anyone tries.
+        plain = " ".join(re.sub(r"[^a-z ]", " ", raw.lower()).split())
+        if plain in SELF:
+            import profile
+
+            mine = profile.get("mobile")
+            if not mine:
+                return ("I don't know your mobile number — add it on the "
+                        "setup page and I'll ring you.")
+            name, raw = "your mobile", mine
+            if mode == "bridge":
+                # bridging him to himself would ring his phone and then dial
+                # the same phone, which is engaged by definition. Ringing him
+                # and speaking is what "call me" actually means.
+                mode = "speak"
+                message = message or ("This is a test call. Everything's "
+                                      "working.")
+        else:
+            book = _contacts()
+            match = next((k for k in book if k.lower() in raw.lower()), "")
+            if not match:
+                return (f"I don't have a number for {raw}. Say it with the "
+                        f"number and I'll remember it.")
+            name, raw = match, str(book[match])
 
     ok, why = phone_call.configured()
     if not ok:
         return why
 
     number = phone_call.normalise(raw)
-    mode = str(args.get("mode") or "bridge").strip().lower()
-    message = str(args.get("message") or "").strip()
     if mode == "speak" and not message:
         return "What should I tell them?"
 
