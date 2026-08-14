@@ -71,8 +71,22 @@ def usage(force: bool = False) -> dict:
         r = requests.get("https://api.elevenlabs.io/v1/user/subscription",
                          headers={"xi-api-key": key}, timeout=15)
         if r.status_code != 200:
-            return data or {"used": 0, "limit": 0}
+            # keep WHY. "Couldn't reach ElevenLabs" is what this used to say
+            # when the truth was "they answered instantly and told us the key
+            # was wrong" — a wrong diagnosis costs him a round trip.
+            why = ""
+            try:
+                detail = r.json().get("detail", {})
+                why = (detail.get("message") if isinstance(detail, dict)
+                       else str(detail)) or ""
+            except Exception:
+                pass
+            data["error"] = why[:160] or f"HTTP {r.status_code}"
+            data["checked"] = time.time()
+            _save(data)
+            return data
         body = r.json()
+        data.pop("error", None)
         data.update({"used": int(body.get("character_count", 0)),
                      "limit": int(body.get("character_limit", 0)),
                      "resets": body.get("next_character_count_reset_unix", 0),
@@ -137,6 +151,14 @@ def status() -> str:
     data = usage(force=True)
     limit = int(data.get("limit", 0))
     if not limit:
+        problem = str(data.get("error", ""))
+        if "API key ID" in problem or "invalid_api_key" in problem:
+            return ("That's the key ID, not the key. ElevenLabs only shows "
+                    "the real one when you create or rotate it, and it "
+                    "starts with s k underscore. Make a new key and paste "
+                    "that into the setup page.")
+        if problem:
+            return f"ElevenLabs turned me away: {problem}"
         return "I couldn't reach ElevenLabs to check the balance."
     used = int(data.get("used", 0))
     left = max(0, limit - used)
