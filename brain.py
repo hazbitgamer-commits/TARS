@@ -114,6 +114,32 @@ def wants_plan(lowered: str) -> bool:
     return bool(_PLAN_ASK.search(lowered) and not _PLAN_NOT.search(lowered))
 
 
+# Arming the room watch. "Guard my room" would otherwise land on the camera
+# skill (one look, now) or quiet hours. Note this is the ONE place an
+# ongoing camera watch can start: it needs him to say it.
+_GUARD_ON = re.compile(
+    r"\b(guard|watch|keep an eye on|keep watch on|monitor) (my |the )?"
+    r"(room|bedroom|door|desk|place)\b"
+    r"|\bguard mode\b|\bkeep guard\b"
+    r"|\btell me if (anyone|someone) (comes|walks) in\b")
+_GUARD_OFF = re.compile(
+    r"\b(stand down|stop guarding|stop watching (my |the )?(room|bedroom)|"
+    r"guard off|turn off (the )?guard|disarm)\b")
+_GUARD_STATUS = re.compile(
+    r"\b(is the guard (on|running)|guard status|are you (still )?watching)\b")
+
+
+def wants_guard(lowered: str) -> str:
+    """'on', 'off', 'status', or '' for none of the above."""
+    if _GUARD_OFF.search(lowered):
+        return "off"
+    if _GUARD_STATUS.search(lowered):
+        return "status"
+    if _GUARD_ON.search(lowered):
+        return "on"
+    return ""
+
+
 def _ordinal(day: int) -> str:
     """9 -> 'th', 21 -> 'st' — TARS says dates the way people do."""
     if 11 <= day % 100 <= 13:
@@ -814,6 +840,13 @@ class Brain:
         # and saved passwords was unreachable by voice. A better skill
         # description won't win against "open X" meaning "launch X", so this
         # is decided here instead of being argued with the router.
+        guard_action = wants_guard(lowered)
+        if guard_action:
+            result = self.skills.run("guard", {"action": guard_action})
+            self.history += [{"role": "user", "content": text},
+                             {"role": "assistant", "content": result}]
+            return result
+
         if wants_plan(lowered):
             action = "week" if re.search(r"\b(week|fortnight|plan)\b", lowered) \
                 else ("when" if "when should i start" in lowered else "today")
