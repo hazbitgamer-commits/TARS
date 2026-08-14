@@ -105,8 +105,11 @@ html,body{{margin:0;height:100%;background:#07090d;color:#9fb;
  overflow:hidden;overscroll-behavior:none}}
 /* 100dvh, not 100vh: on a phone the address bar and the on-screen keyboard
    both change the usable height, and vh doesn't notice either */
-#wrap{{position:fixed;inset:0;display:flex;align-items:center;
- justify-content:center;height:100dvh}}
+/* The bar sits BELOW the picture, not on top of it. Floating it over the
+   bottom hid the Windows taskbar and the last inch of the desktop — the
+   part you most often need, since that's where the taskbar lives. */
+#wrap{{position:fixed;left:0;right:0;top:0;bottom:var(--bar,66px);
+ display:flex;align-items:center;justify-content:center}}
 img{{max-width:100%;max-height:100%;object-fit:contain;
  touch-action:none;user-select:none;-webkit-user-drag:none;display:block}}
 p{{opacity:.65;font-size:13px;margin:8px;text-align:center}}
@@ -116,11 +119,14 @@ button:active{{background:#1b2a22}}
 #bar{{position:fixed;left:0;right:0;bottom:0;display:flex;gap:8px;
  padding:9px calc(9px + env(safe-area-inset-left))
  calc(9px + env(safe-area-inset-bottom)) 9px;
- background:linear-gradient(transparent,#07090dcc 35%)}}
+ background:#0b0e13;border-top:1px solid #182028}}
 #bar button{{flex:1;min-height:48px}}   /* 48px: a thumb, not a cursor */
 #kb{{position:fixed;left:8px;right:8px;bottom:8px;display:none}}
-#tip{{position:fixed;top:0;left:0;right:0;padding:6px;font-size:12px;
- background:#07090dcc;text-align:center}}
+/* the hint floats — it's over the very top of the desktop, which is almost
+   never where you're working, and it fades to nothing after a moment */
+#tip{{position:fixed;top:0;left:0;right:0;padding:5px;font-size:12px;
+ background:#07090dcc;text-align:center;transition:opacity .6s;
+ pointer-events:none}}
 .dot{{position:fixed;width:26px;height:26px;margin:-13px 0 0 -13px;
  border:2px solid #6fe3a4;border-radius:50%;pointer-events:none;
  animation:pop .45s ease-out forwards}}
@@ -159,8 +165,15 @@ VIEWER = """<div id=wrap><img id=v src="/mjpeg?c=CODE"></div>
 <script>
 const img=document.getElementById('v'), kb=document.getElementById('kb'),
       tip=document.getElementById('tip'), bar=document.getElementById('bar');
-const say=t=>{tip.textContent=t; clearTimeout(say.t);
-              say.t=setTimeout(()=>tip.textContent=HINT,2600)};
+const say=t=>{tip.textContent=t; tip.style.opacity=1; clearTimeout(say.t);
+              say.t=setTimeout(()=>{tip.style.opacity=0},2600)};
+setTimeout(()=>{tip.style.opacity=0},5000);   // the hint gets out of the way
+
+/* Tell the layout exactly how tall the bar is, so the picture ends where
+   the bar begins — guessing a height left a sliver of desktop hidden. */
+const fit=()=>document.documentElement.style.setProperty(
+  '--bar', (bar.style.display==='none' ? 0 : bar.offsetHeight) + 'px');
+addEventListener('resize', fit);
 const HINT='Tap = click · hold = right click · 2 fingers = scroll · pinch = zoom';
 const post=a=>fetch('/input?c=CODE',{method:'POST',
     headers:{'Content-Type':'application/json'},body:JSON.stringify(a)})
@@ -277,6 +290,7 @@ img.addEventListener('wheel',e=>{e.preventDefault();
 function showKb(on){
   kb.style.display = on ? 'block' : 'none';
   bar.style.display = on ? 'none' : 'flex';
+  fit();                       /* the picture grows back into the space */
   if(on) kb.focus(); else kb.blur();
 }
 document.getElementById('bkb').onclick=()=>showKb(true);
@@ -300,7 +314,7 @@ document.getElementById('bzoom').onclick=()=>{
 document.getElementById('bstop').onclick=()=>{
   post({type:'quit'}); say('Stopping…');
   setTimeout(()=>{document.body.innerHTML='<div id=wrap><p>Stopped.</p></div>';},600);};
-apply();
+apply(); fit();
 </script>"""
 
 
