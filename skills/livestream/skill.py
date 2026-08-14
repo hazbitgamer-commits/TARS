@@ -58,6 +58,8 @@ def run(args: dict) -> str:
                         f"{livestream.MINUTES} minutes.", force=True)
     except Exception:
         return f"Stream's up but I couldn't text you the link. Code is {code}."
-    what = "your screens" if source.startswith("screen") else "the room"
+    what = {"screen": "both your screens",
+            "screen:left": "your left screen",
+            "screen:right": "your right screen"}.get(source, "the room")
     return (f"Streaming {what}. Link and code are on your phone — it shuts "
             f"itself off in {livestream.MINUTES} minutes.")

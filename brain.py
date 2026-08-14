@@ -129,6 +129,57 @@ _GUARD_STATUS = re.compile(
     r"\b(is the guard (on|running)|guard status|are you (still )?watching)\b")
 
 
+# "Type in Claude 'how do I stream my screen' and then send" was answered
+# with "I don't have a number for ... and then send" — the word "send"
+# dragged the whole thing into the phone-call skill. He tried three times.
+#
+# Typing something and submitting it is one action, and it has to be read as
+# one: the text to type is whatever sits between the app name and the "and
+# send", or inside the quotes if he used any.
+_TYPE_SEND = re.compile(
+    r"\btype\b(?:\s+(?:in|into|to))?\s*(?P<rest>.+)", re.I)
+_SEND_TAIL = re.compile(
+    r"\s*(?:,)?\s*(?:and\s+then|then|and)?\s*"
+    r"(?:send|submit|enter|hit enter|press enter|send it)\s*(?:it)?\s*$", re.I)
+# Double quotes first, smart ones included — phones and whisper both produce
+# curly ones. Single quotes are tried ONLY as a fallback, because "it won't
+# let me close the live" contains an apostrophe that looks exactly like a
+# closing quote and truncated the text to "it won".
+_QUOTED_PAIRS = (re.compile(r"[\"“”](?P<q>[^\"“”]{2,})[\"“”]"),
+                 re.compile(r"[‘'](?P<q>[^‘']{2,})[’']"))
+
+
+def wants_type_send(text: str) -> tuple[str, bool]:
+    """(what to type, whether to submit it). ('', False) if not this."""
+    lowered = text.lower()
+    if not re.search(r"\btype\b", lowered):
+        return "", False
+    match = _TYPE_SEND.search(text)
+    if not match:
+        return "", False
+    rest = match.group("rest").strip()
+
+    submit = bool(_SEND_TAIL.search(rest))
+    body = _SEND_TAIL.sub("", rest).strip()
+
+    for pattern in _QUOTED_PAIRS:
+        quoted = pattern.search(body)
+        if quoted:
+            return quoted.group("q").strip(), submit
+
+    # No quotes: strip a leading "where to type it" phrase. Written as whole
+    # alternatives rather than a lazy wildcard, which used to eat "the chat "
+    # and leave "box how are you" as the thing to type.
+    body = re.sub(r"^(?:the\s+)?(?:claude|chatgpt|gpt|tars|notepad|word|"
+                  r"discord|browser|google)?\s*"
+                  r"(?:text\s*box|chat\s*box|search\s*box|box|chat|window|"
+                  r"prompt|dashboard|bar)\b[\s,:-]*",
+                  "", body, flags=re.I).strip()
+    body = re.sub(r"^(?:the\s+)?(claude|chatgpt|gpt|notepad|word|discord|"
+                  r"browser|google)\b[\s,:-]*", "", body, flags=re.I).strip()
+    return (body, submit) if len(body) >= 2 else ("", False)
+
+
 # Starting and STOPPING the live stream by voice. Stopping matters most:
 # it could only be turned off from Telegram, so saying "stop the live
 # stream" in the room did nothing at all. Turning a camera off must never
@@ -877,6 +928,14 @@ class Brain:
         # and saved passwords was unreachable by voice. A better skill
         # description won't win against "open X" meaning "launch X", so this
         # is decided here instead of being argued with the router.
+        to_type, submit = wants_type_send(text)
+        if to_type:
+            result = self.skills.run("type_text", {
+                "text": to_type, "send": "true" if submit else ""})
+            self.history += [{"role": "user", "content": text},
+                             {"role": "assistant", "content": result}]
+            return result
+
         stream_action, stream_source = wants_stream(lowered)
         if stream_action:
             result = self.skills.run("livestream", {
