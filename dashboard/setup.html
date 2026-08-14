@@ -51,6 +51,10 @@ button.ghost{background:none;border-color:var(--edge);color:var(--dim)}
     <label><div class="q">Which town or city?</div>
       <div class="hint">For weather and sunset times</div>
       <input id="city" placeholder="e.g. Perth" autocomplete="off"></label>
+    <label><div class="q">Your email address</div>
+      <div class="hint">Used when he fills in a signup form for you. Not a
+        secret, so it stays readable here</div>
+      <input id="email" placeholder="you@example.com" autocomplete="off"></label>
   </div>
 
   <div class="card">
@@ -119,7 +123,7 @@ button.ghost{background:none;border-color:var(--edge);color:var(--dim)}
 </div>
 
 <script>
-const F = ["name","city","school_portal","seqta_url","seqta_user","seqta_pass",
+const F = ["name","city","email","school_portal","seqta_url","seqta_user","seqta_pass",
            "telegram_token","big_brain","big_brain_key","mobile","eleven_key",
            "twilio_sid","twilio_token","twilio_number","caller_id_mine"];
 const el = id => document.getElementById(id);
