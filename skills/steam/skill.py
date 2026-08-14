@@ -6,11 +6,12 @@ import os
 import re
 from pathlib import Path
 
-DESCRIPTION = ("the owner's Steam games: launch one by name ('launch FC 26', "
-               "'start Arma'), list what's installed ('what games do I "
-               "have'), or open the most recent one ('launch my last "
-               "game'). NOT for non-Steam apps (that's open_app) and NOT "
-               "for buying anything — launching only.")
+DESCRIPTION = ("the owner's PC games, on BOTH Steam and the Epic Games "
+               "Launcher: launch one by name ('launch FC 26', 'start Arma', "
+               "'focus Rocket League', 'open Fortnite'), list what's "
+               "installed ('what games do I have'), or open the most recent "
+               "one ('launch my last game'). NOT for non-game apps (that's "
+               "open_app) and NOT for buying anything — launching only.")
 ARGS = {"game": "game name to launch, 'list' for the library, or 'last' "
                 "for the most recently played one"}
 
@@ -38,10 +39,57 @@ def _libraries(root: Path) -> list[Path]:
     return libs
 
 
+EPIC_MANIFESTS = Path(r"C:\ProgramData\Epic\EpicGamesLauncher\Data\Manifests")
+
+
+def _epic_installed() -> list[dict]:
+    """Epic keeps one JSON manifest per installed game. Reading them is the
+    only way to know what's there — asking the launcher needs it running.
+
+    This exists because "focus Rocket League" got "I can't see Rocket League
+    in your Steam library", which is true and useless: it's an Epic game, and
+    half the library was invisible.
+    """
+    import json
+
+    games = []
+    try:
+        items = sorted(EPIC_MANIFESTS.glob("*.item"))
+    except OSError:
+        return []
+    for item in items:
+        try:
+            data = json.loads(item.read_text(encoding="utf-8", errors="ignore"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        name = str(data.get("DisplayName") or "").strip()
+        app = str(data.get("AppName") or "").strip()
+        if not (name and app):
+            continue
+        # Epic files Unreal Engine, Quixel Bridge and the UE plugins in the
+        # same folder as the games. Without this, "what games have I got"
+        # answers "34" and reads out a list with two plugins in it.
+        cats = [str(c).lower() for c in (data.get("AppCategories") or [])]
+        if cats and "games" not in cats:
+            continue
+        for ch in "™®©":       # or the voice reads "Rocket League R"
+            name = name.replace(ch, "")
+        name = " ".join(name.split())
+        exe = ""
+        try:
+            exe = str(Path(data.get("InstallLocation", ""))
+                      / data.get("LaunchExecutable", ""))
+        except Exception:
+            pass
+        games.append({"name": name, "store": "epic", "appname": app,
+                      "exe": exe, "touched": item.stat().st_mtime})
+    return games
+
+
 def _installed() -> list[dict]:
     root = _steam_root()
     if not root:
-        return []
+        return sorted(_epic_installed(), key=lambda g: -g["touched"])
     games = []
     for lib in _libraries(root):
         for acf in lib.glob("appmanifest_*.acf"):
@@ -54,11 +102,27 @@ def _installed() -> list[dict]:
                    ("redistributable", "steamworks", "runtime", "proton")):
                 continue  # plumbing, not games
             games.append({"name": name.group(1), "appid": appid.group(1),
+                          "store": "steam",
                           "touched": acf.stat().st_mtime})
-    return sorted(games, key=lambda g: -g["touched"])
+    return sorted(games + _epic_installed(), key=lambda g: -g["touched"])
 
 
 def _launch(game: dict) -> str:
+    if game.get("store") == "epic":
+        # the launcher URI is the reliable route: some Epic games refuse to
+        # start without the launcher running, so going straight to the exe
+        # is the fallback, not the first try
+        try:
+            os.startfile(f"com.epicgames.launcher://apps/{game['appname']}"
+                         f"?action=launch&silent=true")
+        except OSError:
+            exe = game.get("exe") or ""
+            if not exe or not Path(exe).exists():
+                return (f"I can see {game['name']} but couldn't start it — "
+                        f"is the Epic launcher installed?")
+            os.startfile(exe)
+        return (f"Launching {game['name']} through Epic. If the launcher was "
+                f"closed it'll take a moment to wake up first.")
     os.startfile(f"steam://rungameid/{game['appid']}")
     return (f"Launching {game['name']} through Steam. If Steam was closed "
             f"it'll take a moment to wake up first.")
@@ -68,14 +132,17 @@ def run(args: dict) -> str:
     want = str(args.get("game") or "list").strip().lower()
     games = _installed()
     if not games:
-        return ("I can't find a Steam library on this PC — is Steam "
-                "installed in the usual spot?")
+        return ("I can't find any games on this PC — no Steam library and no "
+                "Epic games in the usual spots.")
 
     if want in ("list", "library", "games", ""):
         names = [g["name"] for g in games[:8]]
         more = f" and {len(games) - 8} more" if len(games) > 8 else ""
-        return (f"You've got {len(games)} Steam games. Most recent first: "
-                + ", ".join(names) + more + ".")
+        steam = sum(1 for g in games if g.get("store") != "epic")
+        epic = len(games) - steam
+        where = f"{steam} on Steam" + (f" and {epic} on Epic" if epic else "")
+        return (f"You've got {len(games)} games — {where}. Most recent "
+                f"first: " + ", ".join(names) + more + ".")
 
     if want in ("last", "latest", "recent", "my last game"):
         return _launch(games[0])
@@ -98,5 +165,5 @@ def run(args: dict) -> str:
     close = difflib.get_close_matches(want, list(by_name), n=1, cutoff=0.5)
     if close:
         return _launch(by_name[close[0]])
-    return (f"I can't see {want} in your Steam library. Say 'what games do "
-            f"I have' to hear what's installed.")
+    return (f"I can't see {want} on Steam or Epic. Say 'what games do I "
+            f"have' to hear what's installed.")
