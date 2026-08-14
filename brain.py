@@ -89,6 +89,31 @@ def wants_voice_budget(lowered: str) -> bool:
                 and not _BUDGET_NOT.search(lowered))
 
 
+# "What should I work on tonight" answered "1 finished." (the work queue),
+# "plan my week" and "am I behind" both went to Google Calendar. Planning
+# school work is a different question from listing what's due, and the
+# router has no way to know that from descriptions alone.
+_PLAN_ASK = re.compile(
+    r"\bwhat should i (?:work on|do|start|tackle|revise|focus on)\b"
+    r"|\bwhat (?:do|should) i need to do\b"
+    r"|\bplan (?:my|the|out my) (?:week|day|night|evening|homework|work|study|"
+    r"assignments?|assessments?)\b"
+    r"|\bwhen should i start\b"
+    r"|\bam i behind\b"
+    r"|\bwhat'?s (?:most )?(?:urgent|first|the priority)\b"
+    r"|\bwhere (?:do|should) i start\b")
+# these belong to other skills: listing what's due is the school skill, and
+# anything about the calendar is the calendar
+_PLAN_NOT = re.compile(
+    r"\b(calendar|meeting|appointment|remind me|timer|alarm|"
+    r"what'?s due|what is due|shopping|groceries|game|match)\b")
+
+
+def wants_plan(lowered: str) -> bool:
+    """Planning school work — not listing it, not the calendar."""
+    return bool(_PLAN_ASK.search(lowered) and not _PLAN_NOT.search(lowered))
+
+
 def _ordinal(day: int) -> str:
     """9 -> 'th', 21 -> 'st' — TARS says dates the way people do."""
     if 11 <= day % 100 <= 13:
@@ -789,6 +814,16 @@ class Brain:
         # and saved passwords was unreachable by voice. A better skill
         # description won't win against "open X" meaning "launch X", so this
         # is decided here instead of being argued with the router.
+        if wants_plan(lowered):
+            action = "week" if re.search(r"\b(week|fortnight|plan)\b", lowered) \
+                else ("when" if "when should i start" in lowered else "today")
+            result = self.skills.run("plan_work", {
+                "action": action,
+                "what": text if action == "when" else ""})
+            self.history += [{"role": "user", "content": text},
+                             {"role": "assistant", "content": result}]
+            return result
+
         if wants_voice_budget(lowered):
             result = self.skills.run("voice_budget", {})
             self.history += [{"role": "user", "content": text},
