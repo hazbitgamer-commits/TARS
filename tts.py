@@ -9,6 +9,7 @@ import soundfile as sf
 import sounddevice as sd
 
 VOICE = "en-GB-RyanNeural"  # dry British male
+ELEVEN_VOICE = ""           # which PAID voice, when a line is worth paying for
 RATE = "+8%"
 SMOOTH = False  # True: strip pause-punctuation so speech flows with fewer stops
 
@@ -18,10 +19,11 @@ _SETTINGS_FILE = Path(__file__).parent / "voice_settings.json"
 
 
 def _load_saved() -> None:
-    global VOICE, RATE, SMOOTH
+    global VOICE, ELEVEN_VOICE, RATE, SMOOTH
     try:
         data = json.loads(_SETTINGS_FILE.read_text(encoding="utf-8"))
         VOICE = data.get("voice", VOICE)
+        ELEVEN_VOICE = data.get("eleven_voice", ELEVEN_VOICE)
         RATE = data.get("rate", RATE)
         SMOOTH = bool(data.get("smooth", SMOOTH))
     except (FileNotFoundError, json.JSONDecodeError):
@@ -119,7 +121,9 @@ def _eleven(text: str):
             return None
     except Exception:
         pass
-    voice_id = (os.getenv("ELEVENLABS_VOICE") or
+    # whatever he picked on the Voice tab wins; the env var is a fallback for
+    # a fresh install, and George is the fallback's fallback
+    voice_id = (ELEVEN_VOICE or os.getenv("ELEVENLABS_VOICE") or
                 "JBFqnCBsd6RMkjVDRZzb").strip()  # a calm British male
     try:
         import requests

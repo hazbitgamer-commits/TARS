@@ -47,6 +47,25 @@ VOICES = [
     {"id": "en-AU-WilliamNeural", "name": "William", "desc": "Australian male"},
     {"id": "en-AU-NatashaNeural", "name": "Natasha", "desc": "Australian female"},
 ]
+
+# The paid ElevenLabs voices, if a key is set. These are library voices with
+# fixed IDs that work on any account, which matters because a key scoped to
+# text-to-speech can't list them — asking would 401. Every ID below was
+# verified by actually generating a word with it; one more that came from
+# memory turned out to be a 404, which is why none of these are guesses.
+ELEVEN_VOICES = [
+    {"id": "el:JBFqnCBsd6RMkjVDRZzb", "name": "George",
+     "desc": "ElevenLabs — British male"},
+    {"id": "el:IKne3meq5aSn9XLyUdCD", "name": "Charlie",
+     "desc": "ElevenLabs — Australian male"},
+    {"id": "el:onwK4e9ZLuTAKqWW03F9", "name": "Daniel",
+     "desc": "ElevenLabs — British male, deeper"},
+    {"id": "el:nPczCjzI2devNBz1zQrb", "name": "Brian",
+     "desc": "ElevenLabs — American male"},
+    {"id": "el:pFZP5JQG7iQjIQuC4Bku", "name": "Lily",
+     "desc": "ElevenLabs — British female"},
+]
+VOICES = VOICES + ELEVEN_VOICES
 VOICE_IDS = {v["id"] for v in VOICES}
 
 
@@ -887,14 +906,25 @@ class Handler(BaseHTTPRequestHandler):
                     saved = json.loads(path.read_text(encoding="utf-8"))
                 except Exception:
                     saved = {}
-                saved["voice"] = voice_id
                 saved.setdefault("rate", "+8%")
                 saved.setdefault("smooth", False)
+                if voice_id.startswith("el:"):
+                    # an ElevenLabs voice is a separate setting: it's WHICH
+                    # paid voice to use when a line is worth paying for, not
+                    # a replacement for the local voice. The local one still
+                    # handles "okay" and anything over budget, so both have
+                    # to be remembered.
+                    saved["eleven_voice"] = voice_id[3:]
+                else:
+                    saved["voice"] = voice_id
                 path.write_text(json.dumps(saved, indent=2), encoding="utf-8")
                 try:
                     import tts
 
-                    tts.VOICE = voice_id
+                    if voice_id.startswith("el:"):
+                        tts.ELEVEN_VOICE = voice_id[3:]
+                    else:
+                        tts.VOICE = voice_id
                 except Exception:
                     pass
                 self._send(200, json.dumps({"ok": True, "current": voice_id}).encode(),
