@@ -180,6 +180,41 @@ def wants_type_send(text: str) -> tuple[str, bool]:
     return (body, submit) if len(body) >= 2 else ("", False)
 
 
+# "Send me a screenshot of my left screen" saved a file to Pictures instead
+# of texting it. "Send me" is the whole request — where it ends up is the
+# point, not an afterthought.
+_SHOT_SEND = re.compile(
+    r"\b(send|text|message) (me|it|that|this|through)\b[^.]*"
+    r"\b(screenshot|screen ?grab|shot of (my|the) screen|my screen)\b"
+    r"|\b(screenshot|screen ?grab)\b[^.]*\b(to my phone|on my phone|"
+    r"over telegram|to telegram)\b")
+
+
+def wants_shot_sent(lowered: str) -> str:
+    """'' if not this, else which monitor ('', 'left', 'right')."""
+    if not _SHOT_SEND.search(lowered):
+        return ""
+    if re.search(r"\bleft\b", lowered):
+        return "left"
+    if re.search(r"\bright\b", lowered):
+        return "right"
+    return "main"
+
+
+# "Click enter" went hunting for a text box on screen. Enter is a KEY.
+_PRESS_KEY = re.compile(
+    r"\b(click|press|hit|tap|push) (the )?"
+    r"(?P<key>enter|return|escape|esc|tab|space|backspace|delete)\b")
+
+
+def wants_keypress(lowered: str) -> str:
+    found = _PRESS_KEY.search(lowered)
+    if not found:
+        return ""
+    key = found.group("key")
+    return {"return": "enter", "esc": "escape"}.get(key, key)
+
+
 # Starting and STOPPING the live stream by voice. Stopping matters most:
 # it could only be turned off from Telegram, so saying "stop the live
 # stream" in the room did nothing at all. Turning a camera off must never
@@ -200,8 +235,14 @@ _STREAM_STATUS = re.compile(
     r"\b(is the (live ?)?stream (on|running|going)|stream status)\b")
 
 
+_STREAM_FPS = re.compile(r"\b(\d{1,2})\s*(?:fps|frames? (?:per|a) second)\b")
+
+
 def wants_stream(lowered: str) -> tuple[str, str]:
     """(action, source) — action is '' when this isn't about the stream."""
+    rate = _STREAM_FPS.search(lowered)
+    if rate:
+        return "fps:" + rate.group(1), ""
     if _STREAM_OFF.search(lowered):
         return "stop", ""
     if _STREAM_STATUS.search(lowered):
@@ -928,6 +969,20 @@ class Brain:
         # and saved passwords was unreachable by voice. A better skill
         # description won't win against "open X" meaning "launch X", so this
         # is decided here instead of being argued with the router.
+        which_screen = wants_shot_sent(lowered)
+        if which_screen:
+            result = self.skills.run("send_screenshot", {"monitor": which_screen})
+            self.history += [{"role": "user", "content": text},
+                             {"role": "assistant", "content": result}]
+            return result
+
+        key = wants_keypress(lowered)
+        if key:
+            result = self.skills.run("keyboard", {"actions": key})
+            self.history += [{"role": "user", "content": text},
+                             {"role": "assistant", "content": result}]
+            return result
+
         to_type, submit = wants_type_send(text)
         if to_type:
             result = self.skills.run("type_text", {
@@ -938,8 +993,10 @@ class Brain:
 
         stream_action, stream_source = wants_stream(lowered)
         if stream_action:
-            result = self.skills.run("livestream", {
-                "action": stream_action, "source": stream_source or "camera"})
+            args = {"action": stream_action, "source": stream_source or "camera"}
+            if stream_action.startswith("fps:"):
+                args = {"action": "fps", "fps": stream_action.split(":", 1)[1]}
+            result = self.skills.run("livestream", args)
             self.history += [{"role": "user", "content": text},
                              {"role": "assistant", "content": result}]
             return result
@@ -1795,6 +1852,12 @@ class Brain:
                 and not any(w in lowered for w in ("minimize", "desktop", "hide"))):
             name = "chat"
         if name and name != "chat":
+            unasked = self._unasked_for(name, lowered)
+            if unasked:
+                self._journal(f"blocked {name} — nothing in '{text[:40]}' asked for it")
+                self.history += [{"role": "user", "content": text},
+                                 {"role": "assistant", "content": unasked}]
+                return unasked
             refused = self._voice_block(name)
             if refused:
                 self._journal(f"voice-blocked {name}: {text[:60]}")
@@ -1926,6 +1989,37 @@ class Brain:
     # short enough that walking away and someone else sitting down doesn't
     # inherit his permissions.
     _DROPOUT_GRACE = 180
+
+    # Some skills must never be reached by accident. "I meant Claude" — a
+    # two-word clarification — was routed into DELETE FILES, which answered
+    # "That's 35 items in TARS. Deleting is on my hard-block list." The
+    # block held, but nothing in that sentence should have got within reach
+    # of it: the router had simply guessed, and a guess is not a request.
+    #
+    # So the dangerous handful now require the words for what they do to
+    # actually appear. Not a confirmation he can tire of clicking through —
+    # a refusal to even consider it.
+    _MUST_ASK = {
+        "delete_files": r"\b(delete|deleting|remove|removing|bin|trash|"
+                        r"get rid|chuck|wipe|clear out|clean out)\b",
+        "run_command": r"\b(run|execute|command|terminal|powershell|cmd|"
+                       r"script|shell)\b",
+        "organize": r"\b(organi[sz]e|tidy|sort|clean up|declutter|file away)\b",
+        "vacuum": r"\b(vacuum|hoover|clean|basel)\b",
+        "vacuum_room": r"\b(vacuum|hoover|clean|basel)\b",
+        "face_forget": r"\b(forget|remove|delete|unlearn)\b",
+        "backup": r"\b(back ?up|backing up|snapshot|archive)\b",
+        "restart_engine": r"\b(restart|reboot|reload|start over)\b",
+    }
+
+    def _unasked_for(self, name: str, lowered: str) -> str | None:
+        """Did he actually ask for this, or did the router guess?"""
+        pattern = self._MUST_ASK.get(name)
+        if not pattern or re.search(pattern, lowered):
+            return None
+        return ("I nearly ran something you didn't ask for there — nothing "
+                "in that sounded like it. Say it again more plainly if you "
+                "did mean it.")
 
     def _voice_block(self, name: str) -> str | None:
         """Voice recognition is a speed bump, not a lock — it can be fooled
@@ -2580,10 +2674,15 @@ class Brain:
 
     # concrete actions chat likes to falsely claim — mental verbs
     # (remember, listen, wait, keep in mind) deliberately excluded
+    # "30fps" was answered with "Adjusting the live stream to 30 frames per
+    # second. Monitoring the change." He adjusted nothing — there was no
+    # such ability at the time. adjust/tune/set/increase were missing from
+    # this list, so the honesty check never looked at it.
     _ACTION_V = (r"open|clos|launch|start|stop|copy|past|send|push|updat|"
                  r"upload|download|install|run|scan|delet|mov|renam|click|"
                  r"typ|press|play|paus|switch|chang|turn|creat|mak|build|"
-                 r"writ|pull(?:ing)? up|speak")
+                 r"writ|pull(?:ing)? up|speak|adjust|tun|set|increas|"
+                 r"decreas|rais|lower|configur|enabl|disabl|connect")
 
     # skills a rescued guess must never reach — destructive, outward-facing,
     # or expensive. Everything else is fair game: the owner said "I don't care

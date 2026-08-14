@@ -421,6 +421,21 @@ def start(source: str = "camera", fps: int = 0) -> tuple[str, str]:
     return url, code
 
 
+def set_fps(target: int) -> str:
+    """He asked for 30fps mid-stream and was told it had been adjusted, when
+    nothing had. Now it can actually be done — and when the camera won't
+    give it, that's said plainly rather than agreed to."""
+    want = max(2, min(30, int(target)))
+    _live["fps"] = want
+    if not live():
+        return f"Noted — the next stream will run at {want} frames a second."
+    if _live["source"] == "camera" and want > 20:
+        return (f"Set to {want}. Fair warning: in a dark room the camera "
+                f"halves its own rate to gather light, so you may still see "
+                f"about 15 until you put a lamp on.")
+    return f"Stream's now running at {want} frames a second."
+
+
 def stop(quiet: bool = False) -> str:
     with _lock:
         was = _live["on"]

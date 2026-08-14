@@ -33,6 +33,10 @@ def run(args: dict) -> str:
     if "status" in action or "is the" in action:
         return livestream.status()
 
+    fps = str(args.get("fps") or "").strip()
+    if fps.isdigit():
+        return livestream.set_fps(int(fps))
+
     try:
         import tars_phone
 
