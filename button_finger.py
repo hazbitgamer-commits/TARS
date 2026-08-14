@@ -23,6 +23,11 @@ import time
 TICK_EVERY = 20          # the sketch gives up after 180s of silence
 BAUD = 9600
 HINTS = ("arduino", "ch340", "usb-serial", "usb serial", "wch", "silicon labs")
+# Windows describes his genuine Uno as "USB Serial Device" made by
+# "Microsoft", so the words above find nothing. The USB vendor ID doesn't
+# lie: 0x2341 Arduino, 0x2A03 Arduino.org, 0x1A86 CH340 clones, 0x0403 FTDI,
+# 0x10C4 CP210x.
+BOARD_VIDS = {0x2341, 0x2A03, 0x1A86, 0x0403, 0x10C4, 0x1B4F, 0x239A}
 
 _state = {"port": "", "serial": None, "ticks": 0, "since": 0.0}
 _lock = threading.Lock()
@@ -35,11 +40,13 @@ def _find_port() -> str:
         return ""
     best = ""
     for port in list_ports.comports():
+        if port.vid in BOARD_VIDS:
+            return port.device          # the hardware ID — trust this first
         blurb = f"{port.description} {port.manufacturer or ''}".lower()
         if any(h in blurb for h in HINTS):
-            return port.device          # a known board wins outright
+            return port.device
         if not best and port.device.upper().startswith("COM"):
-            best = port.device          # otherwise the first serial port
+            best = port.device          # last resort: the first serial port
     return best
 
 
