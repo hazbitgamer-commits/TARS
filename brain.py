@@ -68,6 +68,27 @@ def wants_setup(lowered: str) -> bool:
                 and not _SETUP_NOT.search(lowered))
 
 
+# "How much voice have I got left?" went to voice_settings, which answered
+# "I'm using Guy at speed +8 percent" — a true statement and the wrong
+# question. Both skills are about the voice; only one is about what's left
+# of it, and the difference is the word "left", not the word "voice".
+_BUDGET_SUBJECT = re.compile(r"\b(voice|credits?|elevenlabs|eleven labs)\b")
+_BUDGET_MEASURE = re.compile(
+    r"\b(left|remaining|budget|run(?:ning)? out|used up|use[dt]? so far|"
+    r"how (?:much|many)|balance|allowance|quota)\b")
+# these are about CHANGING the voice, not measuring it
+_BUDGET_NOT = re.compile(
+    r"\b(change|switch|set|pick|choose|use the|sound like|speed|rate|"
+    r"faster|slower|which voice|what voice are)\b")
+
+
+def wants_voice_budget(lowered: str) -> bool:
+    """How much paid voice is left — not which voice he's using."""
+    return bool(_BUDGET_SUBJECT.search(lowered)
+                and _BUDGET_MEASURE.search(lowered)
+                and not _BUDGET_NOT.search(lowered))
+
+
 def _ordinal(day: int) -> str:
     """9 -> 'th', 21 -> 'st' — TARS says dates the way people do."""
     if 11 <= day % 100 <= 13:
@@ -768,6 +789,12 @@ class Brain:
         # and saved passwords was unreachable by voice. A better skill
         # description won't win against "open X" meaning "launch X", so this
         # is decided here instead of being argued with the router.
+        if wants_voice_budget(lowered):
+            result = self.skills.run("voice_budget", {})
+            self.history += [{"role": "user", "content": text},
+                             {"role": "assistant", "content": result}]
+            return result
+
         if wants_setup(lowered):
             result = self.skills.run("open_setup", {})
             self.history += [{"role": "user", "content": text},
