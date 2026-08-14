@@ -34,6 +34,13 @@ MIN_CHARS = 25          # below this it's an acknowledgement, not an answer
 MAX_CHARS = 700         # above this it's a readout; the local voice can have it
 RESERVE = 0.10          # keep the last tenth for the end of the month
 CHECK_EVERY = 600       # seconds between asking ElevenLabs where we're up to
+# An ElevenLabs key can be scoped to text-to-speech WITHOUT permission to read
+# the account, which is a perfectly sensible thing to do and leaves this
+# module blind. Blind used to mean "allow everything", so the pacing quietly
+# stopped and a month's credits went in an afternoon. Now it falls back to
+# counting its own spending against the free-tier allowance — an estimate,
+# but an estimate that paces is worth more than perfect numbers that don't.
+ASSUMED_LIMIT = 10000
 
 
 def _state() -> dict:
@@ -102,6 +109,12 @@ def _spent_today(data: dict) -> int:
     return int(data.get("daily", {}).get(day, 0))
 
 
+def _spent_this_month(data: dict) -> int:
+    month = time.strftime("%Y-%m")
+    return sum(int(v) for k, v in data.get("daily", {}).items()
+               if str(k).startswith(month))
+
+
 def _note_spend(chars: int) -> None:
     data = _state()
     day = time.strftime("%Y-%m-%d")
@@ -124,9 +137,12 @@ def allow(text: str) -> tuple[bool, str]:
 
     data = usage()
     limit = int(data.get("limit", 0))
-    if not limit:
-        return True, "no limit known"      # don't refuse on a failed lookup
-    used = int(data.get("used", 0))
+    if limit:
+        used = int(data.get("used", 0))
+    else:
+        # blind: the key can speak but can't read the account. Pace against
+        # our own tally rather than giving up and spending the lot.
+        limit, used = ASSUMED_LIMIT, _spent_this_month(data)
     left = limit - used
     if left <= limit * RESERVE:
         return False, "saving the last of the month"
@@ -157,6 +173,15 @@ def status() -> str:
                     "the real one when you create or rotate it, and it "
                     "starts with s k underscore. Make a new key and paste "
                     "that into the setup page.")
+        if "user_read" in problem:
+            # the common case: speech works, reading the account doesn't
+            spent = _spent_this_month(_state())
+            left = max(0, ASSUMED_LIMIT - spent)
+            return (f"My key can talk but can't read your account, so I'm "
+                    f"going on my own count: about {left:,} of "
+                    f"{ASSUMED_LIMIT:,} credits left this month — roughly "
+                    f"{left / 1000:.0f} minutes. Tick User Read on the key "
+                    f"in ElevenLabs and I'll give you the real number.")
         if problem:
             return f"ElevenLabs turned me away: {problem}"
         return "I couldn't reach ElevenLabs to check the balance."
