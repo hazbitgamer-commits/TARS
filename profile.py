@@ -112,7 +112,14 @@ def save(data: dict) -> None:
             # passwords go to Windows Credential Manager and NOWHERE else.
             # Not profile.json, not .env — this file gets backed up and that
             # file gets read by anything on the PC.
-            vault.put_env(_env_name(key, {**current, **data}), value)
+            var = _env_name(key, {**current, **data})
+            vault.put_env(var, value)
+            # ...and into THIS process's environment too. Without this a
+            # secret saved on the setup page only took effect after a
+            # restart, because the vault is read once at startup — so he'd
+            # paste a Twilio token, be told he was set up, and find calling
+            # still broken. Vault for next time, environment for right now.
+            os.environ[var] = value
             current.pop(key, None)
             continue
         current[key] = value
