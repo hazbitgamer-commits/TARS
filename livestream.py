@@ -313,30 +313,72 @@ def _say(words: str) -> None:
         pass
 
 
+PIDFILE = BASE / "livestream_tunnel.pid"
+
+
+def _kill_strays() -> None:
+    """Kill a tunnel left over from last time.
+
+    stop() terminates the process it started — but if TARS restarts while a
+    stream is up, that reference dies with the old process and cloudflared
+    keeps running, forever, holding a tunnel to a port nothing is serving.
+    One was found still alive hours later. The PID is written to a file so
+    a fresh TARS can still find and kill it.
+    """
+    import subprocess
+
+    try:
+        pid = int(PIDFILE.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return
+    try:
+        subprocess.run(["taskkill", "/PID", str(pid), "/F"],
+                       capture_output=True, timeout=10,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:
+        pass
+    PIDFILE.unlink(missing_ok=True)
+
+
 def _open_tunnel(port: int) -> str:
-    """cloudflared prints the public URL on stderr as it starts."""
+    """cloudflared prints the public URL on stderr as it starts.
+
+    The reading happens on its own thread with a hard deadline: readline()
+    blocks, so a cloudflared that starts but says nothing used to hang the
+    whole call forever — the 45-second limit was only checked BETWEEN lines,
+    which never arrived.
+    """
     import re
     import subprocess
 
     if not CLOUDFLARED.exists():
         return ""
+    _kill_strays()
     proc = subprocess.Popen(
         [str(CLOUDFLARED), "tunnel", "--url", f"http://127.0.0.1:{port}",
          "--no-autoupdate"],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     _live["tunnel"] = proc
-    deadline = time.time() + 45
-    while time.time() < deadline:
-        line = proc.stdout.readline()
-        if not line:
-            if proc.poll() is not None:
-                return ""
-            continue
-        found = re.search(r"https://[-\w]+\.trycloudflare\.com", line)
-        if found:
-            return found.group(0)
-    return ""
+    try:
+        PIDFILE.write_text(str(proc.pid), encoding="utf-8")
+    except OSError:
+        pass
+
+    found = []
+
+    def read_until_url() -> None:
+        pattern = re.compile(r"https://[-\w]+\.trycloudflare\.com")
+        for line in proc.stdout:
+            hit = pattern.search(line)
+            if hit:
+                found.append(hit.group(0))
+                return
+
+    reader = threading.Thread(target=read_until_url, daemon=True)
+    reader.start()
+    reader.join(timeout=45)
+    return found[0] if found else ""
 
 
 def start(source: str = "camera", fps: int = 0) -> tuple[str, str]:
@@ -391,6 +433,7 @@ def stop(quiet: bool = False) -> str:
                 getattr(thing, how)()
         except Exception:
             pass
+    _kill_strays()      # belt and braces: terminate() can miss a child
     if was and not quiet:
         _say("Live camera off.")
     return "Live stream stopped." if was else "It wasn't running."

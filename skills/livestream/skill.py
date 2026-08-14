@@ -42,7 +42,12 @@ def run(args: dict) -> str:
     except Exception:
         pass
 
-    url, code = livestream.start(source)
+    try:
+        url, code = livestream.start(source)
+    except Exception as e:
+        # "an error occurred" told him nothing. Say what broke.
+        livestream.stop(quiet=True)
+        return f"The stream didn't start ({type(e).__name__}: {e})."
     if not code:
         return url          # already running, or it failed — url holds why
     try:
