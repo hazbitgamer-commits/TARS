@@ -57,6 +57,7 @@ HELP = ("Text me like you'd talk to me:\n"
         "• /photo — a photo of the room, right now\n"
         "• /clip — six seconds of video from the room\n"
         "• /screen — what's on the PC screen (add left/right)\n"
+        "• /live — a live view for 10 minutes, behind a code\n"
         "• /school — today's lessons, straight from SEQTA\n"
         "• /due — what's coming up, soonest first\n"
         "• /status — how I'm doing right now\n"
@@ -322,6 +323,28 @@ def _command(cmd: str, chat_id: int) -> bool:
         except Exception as e:
             reply = f"Couldn't reach school: {e}"
         _api("sendMessage", chat_id=chat_id, text=reply or "Nothing due.")
+        return True
+    if low.startswith("/live"):
+        import livestream
+
+        if "off" in low or "stop" in low:
+            _api("sendMessage", chat_id=chat_id, text=livestream.stop())
+            return True
+        if "status" in low:
+            _api("sendMessage", chat_id=chat_id, text=livestream.status())
+            return True
+        _api("sendMessage", chat_id=chat_id,
+             text="Opening a live view — give me a few seconds.")
+        url, code = livestream.start()
+        if not code:
+            _api("sendMessage", chat_id=chat_id, text=url)
+            return True
+        # link and code in SEPARATE messages, so one of them leaking on its
+        # own (a shoulder-surfed screen, a shared chat) isn't enough
+        _api("sendMessage", chat_id=chat_id, text=url)
+        _api("sendMessage", chat_id=chat_id,
+             text=f"Code: {code}\nCloses itself in "
+                  f"{livestream.MINUTES} minutes. /live off to end it now.")
         return True
     if low.startswith(("/photo", "/room", "/clip", "/video", "/screen")):
         # looking at his own room or screen, from wherever he is — one
