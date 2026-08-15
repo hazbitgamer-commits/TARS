@@ -594,6 +594,13 @@ def identify(frame=None, wait: bool = True, learn: bool = True) -> list[dict]:
     why = {}
     people = [[f, _match(f["embedding"], db)] for f in _faces_in(frame, why=why)]
 
+    # Nothing found, but the tracker can see a face? Straighten it and look
+    # again. This is the difference between working and not working when
+    # he's lying on his bed with his head on its side.
+    if not people:
+        for f in _from_hint(frame, why):
+            _merge_face(people, f, _match(f["embedding"], db))
+
     # Anyone it couldn't put a name to gets a second attempt on a lifted
     # picture. Measured, not assumed: lifting a face that was already lit
     # well enough makes the match WORSE (0.24 to 0.38 on his own enrolment
@@ -664,7 +671,50 @@ def _merge_face(people: list, face: dict, match: tuple) -> None:
     people.append([face, match])
 
 
+# Where the live tracker last saw a face, and how tilted it was. MediaPipe
+# finds faces every frame anyway, in about two milliseconds, and it copes
+# with a head on its side; yunet — the detector the recogniser uses — wants
+# a roughly upright face and quietly finds nothing otherwise. That mismatch
+# is why a face could be meshed and tracked on screen and still come back
+# UNKNOWN: the recogniser was never handed a face at all.
+#
+# So the tracker leaves a note of where the face is, and recognition uses it
+# to straighten the picture before looking again. yunet still does the final
+# crop and alignment, so the embeddings stay comparable with everything
+# already enrolled — it just gets a fair chance to see the face first.
+MESH_HINT = {}
+HINT_FRESH = 2.0          # seconds before a hint is too old to trust
+
 LAST_LOOK = FACES_DIR / "last_look.json"
+
+
+def note_face(box, angle: float) -> None:
+    """Called by the tracker: 'there's a face here, tilted this much'."""
+    MESH_HINT.update(box=[int(v) for v in box], angle=float(angle),
+                     at=time.time())
+
+
+def _from_hint(frame, why: dict) -> list[dict]:
+    """Look again, using the tracker's note to straighten the face first."""
+    if not MESH_HINT or time.time() - MESH_HINT.get("at", 0) > HINT_FRESH:
+        return []
+    import cv2
+
+    x, y, w, h = MESH_HINT["box"]
+    cx, cy = x + w / 2.0, y + h / 2.0
+    reach = int(max(w, h) * 0.9)
+    spun = cv2.warpAffine(
+        frame, cv2.getRotationMatrix2D((cx, cy), MESH_HINT["angle"], 1.0),
+        (frame.shape[1], frame.shape[0]))
+    crop = spun[max(0, int(cy - reach)):int(cy + reach),
+                max(0, int(cx - reach)):int(cx + reach)]
+    if crop.size == 0:
+        return []
+    why["straightened_by"] = round(MESH_HINT["angle"], 1)
+    found = _faces_in(crop, why=why)
+    for f in found:
+        f["box"] = (x, y, w, h)      # report where the face really is
+    return found
 
 
 def _note_look(**what) -> None:

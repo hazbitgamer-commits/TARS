@@ -455,6 +455,21 @@ def _annotate(frame):
 
             _mesh(frame, pts)
 
+            # Tell the recogniser where this face is and how far over it's
+            # tilted, measured across the outer corners of the eyes. Without
+            # this it runs its own detector on the whole frame, which only
+            # finds upright faces — so a head resting on a pillow tracked
+            # perfectly here and came back UNKNOWN every time.
+            try:
+                import faces as _faces
+
+                if len(pts) > 263:
+                    lean = math.degrees(math.atan2(pts[263][1] - pts[33][1],
+                                                   pts[263][0] - pts[33][0]))
+                    _faces.note_face((x, y, w, h), lean)
+            except Exception:
+                pass
+
             name, score = _name_for(x, y, w, h)
             colour = GREEN if name else AMBER
             _brackets(frame, x, y, w, h, colour)

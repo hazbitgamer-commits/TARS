@@ -267,6 +267,48 @@ finally:
     F.threading.Thread = real_thread
     F.ready, F._warming = was_ready, was_warming
 
+print("\nthe tilted-head fix — a face on its side is still his face")
+# yunet only finds roughly upright faces, so lying on a pillow meant the
+# recogniser was handed nothing at all while the mesh tracked him happily.
+# The tracker now says where the face is and how far over it is.
+try:
+    import cv2 as _cv2
+    import numpy as _np
+
+    real_faces_in = F._faces_in
+    handed = {}
+
+    def spy_faces_in(frame, lift=False, why=None):
+        handed["shape"] = frame.shape[:2]
+        if why is not None:
+            why["detector_returned"] = 1
+        return [{"embedding": BASE_FACE, "box": (5, 5, 50, 50)}]
+
+    F._faces_in = spy_faces_in
+    scene = _np.zeros((720, 1280, 3), dtype=_np.uint8)
+    try:
+        F.MESH_HINT.clear()
+        check("no hint means no second look", F._from_hint(scene, {}), [])
+
+        F.note_face((400, 200, 180, 220), 35.0)
+        F.MESH_HINT["at"] = 0                      # ancient
+        check("a stale hint is ignored", F._from_hint(scene, {}), [])
+
+        F.note_face((400, 200, 180, 220), 35.0)
+        why = {}
+        got = F._from_hint(scene, why)
+        check("a fresh hint gets a second look", len(got), 1)
+        check("and the picture was straightened", why.get("straightened_by"), 35.0)
+        check("the face is reported where it REALLY is, not in the crop",
+              got[0]["box"], (400, 200, 180, 220))
+        check("the crop handed over was cut down from the full frame",
+              handed["shape"] < (720, 1280), True)
+    finally:
+        F._faces_in = real_faces_in
+        F.MESH_HINT.clear()
+except ImportError:
+    print("  (skipped — no cv2/numpy)")
+
 print("\nbrightness reading")
 try:
     check("black reads as dark",
