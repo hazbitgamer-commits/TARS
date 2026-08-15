@@ -270,6 +270,58 @@ def wants_stream(lowered: str) -> tuple[str, str]:
     return "", ""
 
 
+# Screen Rewind. Questions about something that WAS on the screen look, to a
+# router, exactly like questions about his notes — "what was that thing about
+# the assignment" could be either. So the past tense plus a screen-ish word
+# is the tell, and it's decided here rather than left to a guess.
+_REWIND_OFF = re.compile(
+    r"\b(?:stop|turn off|disable|switch off|kill)\s+(?:the\s+)?"
+    r"(?:screen\s+)?rewind\b|\bstop (?:watching|remembering) my screen\b")
+_REWIND_ON = re.compile(
+    r"\b(?:start|turn on|enable|switch on)\s+(?:the\s+)?(?:screen\s+)?rewind\b")
+_REWIND_PAUSE = re.compile(r"\bpause\s+(?:the\s+)?(?:screen\s+)?rewind\b")
+_REWIND_FORGET = re.compile(
+    r"\bforget\s+(?:the\s+)?(?:last\s+)?(\d+)?\s*(minutes?|mins?|hours?)\b"
+    r"|\bforget what (?:you|u) (?:just )?saw\b"
+    r"|\bdelete the last\s+(\d+)?\s*(minutes?|mins?)\b")
+_REWIND_STATUS = re.compile(
+    r"\b(?:how much do you remember|what do you remember of my screen|"
+    r"rewind status|is rewind on)\b")
+_REWIND_ASK = re.compile(
+    r"\bwhat (?:was|were)\b[^?]{0,60}\b(?:i|we)\s+"
+    r"(?:watch\w*|read\w*|look\w*|doing|on|browsing|playing)\b"
+    r"|\bwhat (?:was|did)\b[^?]{0,40}\b(?:that|the)\s+"
+    r"(?:video|error|message|page|site|website|link|article|tab|window)\b"
+    r"|\b(?:find|show) me\b[^?]{0,40}\b(?:that|the)\s+"
+    r"(?:page|site|website|video|error|thing)\b[^?]{0,30}"
+    r"\b(?:i (?:had|was|saw)|from (?:yesterday|earlier|this morning))\b"
+    r"|\bwhat (?:website|site|page|video)\b[^?]{0,40}"
+    r"\b(?:was (?:i|that)|did i)\b")
+_MINUTES = re.compile(r"\b(\d+)\s*(minutes?|mins?|hours?)\b")
+
+
+def wants_rewind(lowered: str) -> tuple[str, int]:
+    """(action, minutes). action is '' when this isn't about Rewind at all."""
+    if _REWIND_OFF.search(lowered):
+        return "off", 0
+    if _REWIND_ON.search(lowered):
+        return "on", 0
+    if _REWIND_PAUSE.search(lowered):
+        found = _MINUTES.search(lowered)
+        return "pause", int(found.group(1)) if found else 30
+    if _REWIND_FORGET.search(lowered):
+        found = _MINUTES.search(lowered)
+        count = int(found.group(1)) if found else 15
+        if found and found.group(2).startswith("hour"):
+            count *= 60
+        return "forget", count
+    if _REWIND_STATUS.search(lowered):
+        return "status", 0
+    if _REWIND_ASK.search(lowered):
+        return "search", 0
+    return "", 0
+
+
 def wants_guard(lowered: str) -> str:
     """'on', 'off', 'status', or '' for none of the above."""
     if _GUARD_OFF.search(lowered):
@@ -1017,6 +1069,28 @@ class Brain:
         guard_action = wants_guard(lowered)
         if guard_action:
             result = self.skills.run("guard", {"action": guard_action})
+            self.history += [{"role": "user", "content": text},
+                             {"role": "assistant", "content": result}]
+            return result
+
+        rewind_action, rewind_mins = wants_rewind(lowered)
+        if rewind_action:
+            args = {"minutes": rewind_mins}
+            if rewind_action == "search":
+                # the whole question is the search — "what was that video
+                # about volcanoes" should look for volcanoes, not for "what"
+                args["query"] = re.sub(
+                    r"\b(what|was|were|the|that|i|we|did|watch\w*|read\w*|"
+                    r"look\w*|doing|show|me|find|on|about|thing)\b", " ",
+                    lowered).strip()
+                args["when"] = next(
+                    (w for w in ("yesterday", "this morning", "this afternoon",
+                                 "today", "last week", "monday", "tuesday",
+                                 "wednesday", "thursday", "friday",
+                                 "saturday", "sunday") if w in lowered), "")
+            else:
+                args["action"] = rewind_action
+            result = self.skills.run("rewind", args)
             self.history += [{"role": "user", "content": text},
                              {"role": "assistant", "content": result}]
             return result

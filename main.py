@@ -309,6 +309,11 @@ def main() -> None:
     button_finger.start()  # feeds the servo on the power button. If TARS
     # goes quiet for three minutes it presses — the only thing that can
     # bring the PC back from a shutdown or a blackout.
+    import rewind
+
+    rewind.start()  # remembers screens he actually settles on, so he can ask
+    # about them later. Skips password managers, banking and private windows
+    # before the screenshot is taken, and says out loud that it's running.
     # after a healthy minute of uptime, this running set of core files is
     # proven bootable — snapshot it so boot.py can roll back a bad Kipp
     # self-upgrade that breaks start-up
