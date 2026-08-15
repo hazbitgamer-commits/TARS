@@ -157,8 +157,20 @@ def _identify_later(frame) -> None:
                                  "score": f.get("score", 0),
                                  "box": f["box"]}
                                 for f in found if f.get("box")]
-        except Exception:
-            pass
+        except Exception as bad:
+            # Swallowed so a hiccup can't kill the feed — but written down,
+            # because an unrecorded failure here shows up as UNKNOWN on
+            # every face forever with nothing anywhere to explain it.
+            try:
+                import traceback
+
+                import faces as _f
+
+                _f._note_look(outcome="recognition threw an error",
+                              error=f"{type(bad).__name__}: {bad}",
+                              where=traceback.format_exc()[-600:])
+            except Exception:
+                pass
         finally:
             _names["at"] = time.time()
             _names["busy"] = False

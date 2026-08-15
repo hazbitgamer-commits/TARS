@@ -566,10 +566,12 @@ def identify(frame=None, wait: bool = True, learn: bool = True) -> list[dict]:
     global ready
     if not ready and not wait:
         _warm_soon()          # ...rather than giving up forever
+        _note_look(outcome="models not loaded yet, warming up")
         return []
     if frame is None:
         frame = get_frame()
     if frame is None:
+        _note_look(outcome="no frame from the camera")
         return []
     db = _db()
     _mirror_migrate(db)
@@ -598,6 +600,21 @@ def identify(frame=None, wait: bool = True, learn: bool = True) -> list[dict]:
     if learned:
         _save_db(db)
     ready = True
+
+    _note_look(
+        outcome="looked" if out else "no face found in the frame",
+        picture=f"{frame.shape[1]}x{frame.shape[0]}",
+        brightness=round(brightness(frame), 1),
+        known_people={n: len(i.get("embeddings", [])) for n, i in db.items()},
+        faces=[{"box": [int(v) for v in f["box"]],
+                "named": name or "UNKNOWN",
+                "score": score,
+                "distance": round(float(dist), 3),
+                "nearest": {n: round(min(
+                    1.0 - float(f["embedding"] @ np.array(e, dtype=np.float32))
+                    for e in i["embeddings"]), 3)
+                    for n, i in db.items() if i.get("embeddings")}}
+               for f, (name, score, dist) in people])
     return out
 
 
@@ -618,6 +635,29 @@ def _merge_face(people: list, face: dict, match: tuple) -> None:
                 slot[0], slot[1] = face, match
             return
     people.append([face, match])
+
+
+LAST_LOOK = FACES_DIR / "last_look.json"
+
+
+def _note_look(**what) -> None:
+    """Record what recognition just saw, for when it says UNKNOWN and no
+    one can tell why.
+
+    Everything on this path is wrapped in 'except: pass' so a camera hiccup
+    can never take the feed down with it — which also means a real failure
+    leaves no trace at all and looks identical to a face it couldn't place.
+    Twice now that has cost hours of guessing at the wrong cause. This is
+    the thing to read first next time.
+    """
+    try:
+        what["at"] = datetime.datetime.now().strftime("%H:%M:%S")
+        what["ready"] = ready
+        what["threshold"] = MATCH_THRESHOLD
+        FACES_DIR.mkdir(exist_ok=True)
+        LAST_LOOK.write_text(json.dumps(what, indent=1), encoding="utf-8")
+    except Exception:
+        pass
 
 
 MIRRORED_FLAG = FACES_DIR / "mirrored.flag"
