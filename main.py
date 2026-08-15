@@ -120,6 +120,16 @@ class AutoGain:
         return (boosted * 32767).astype(np.int16)
 
 
+def _mid_game() -> bool:
+    """Is he in a game right now? If so, one command means one command."""
+    try:
+        import game_watch
+
+        return game_watch.playing_now()
+    except Exception:
+        return False
+
+
 def beep(freq: int = 880, dur: float = 0.12) -> None:
     t = np.linspace(0, dur, int(44100 * dur), False)
     tone = (0.25 * np.sin(2 * np.pi * freq * t)).astype(np.float32)
@@ -618,6 +628,8 @@ def main() -> None:
                     convo.append("TARS: (repeated command caught)")
                     last_command_norm = None
                     first_turn = False
+                    if _mid_game():
+                        break
                     continue
                 last_command_norm = norm
 
@@ -683,6 +695,21 @@ def main() -> None:
                 convo.append(f"TARS: {reply}")
                 stream.start()
                 first_turn = False
+
+                # Mid-game, one command means ONE command. Normally TARS
+                # keeps listening for a few seconds after answering, which is
+                # right at a desk and wrong in a match: the follow-up window
+                # sits open through game audio and him talking to teammates,
+                # and every stray word gets transcribed at him. His words:
+                # "after i say clip that, dont listen for me to say another
+                # thing because that would get annoying" — and he asked for
+                # it on ANY command while playing, not just clipping.
+                #
+                # No blip either. The blip means "still listening", so making
+                # that sound while going straight back to sleep would be a
+                # small lie about what TARS is doing.
+                if _mid_game():
+                    break
                 beep(660, 0.07)  # soft blip: still listening for a follow-up
 
             # conversation over — file topics and capture facts while idle

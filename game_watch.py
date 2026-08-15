@@ -100,6 +100,28 @@ def in_session() -> bool:
     return bool(_session["game"])
 
 
+def playing_now() -> bool:
+    """Is a game in front RIGHT NOW — asked without changing anything.
+
+    in_session() is only refreshed on the once-a-minute tick, which is fine
+    for nudges and wrong for decisions made the instant he speaks: for the
+    first minute of a game it still says no. _check() knows the answer but
+    can't be called to find out, because it also logs sessions and announces
+    things — asking a question shouldn't cause an announcement.
+
+    The Steam list behind this is cached for an hour, so it costs a window
+    title and a substring match.
+    """
+    try:
+        title = _foreground_title().lower()
+        if not title:
+            return bool(_session["game"])
+        known = _steam_titles() + list(EXTRA_GAMES) + _learned()
+        return any(game and game in title for game in known)
+    except Exception:
+        return bool(_session["game"])
+
+
 def session_minutes() -> int:
     return round((time.time() - _session["since"]) / 60) if in_session() else 0
 
