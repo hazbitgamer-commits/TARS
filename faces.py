@@ -420,7 +420,7 @@ def _sweep(name: str, db: dict, anchor: np.ndarray) -> int:
         frame = get_frame()
         if frame is None:
             continue
-        found = _faces_in(frame)
+        found = _look_for_faces(frame)
         if not found:
             continue
         look = max(found, key=lambda f: f["box"][2] * f["box"][3])["embedding"]
@@ -446,7 +446,7 @@ def enroll(name: str, frame=None, which: str = "") -> str:
         return "The camera didn't answer, so I can't learn a face right now."
     if float(frame.mean()) < 12:
         return "It's pitch black in here — turn a light on and try again."
-    found = _faces_in(frame)
+    found = _look_for_faces(frame)
     if not found:
         return "I can't make out a face — more light, or come closer."
     picked = _pick(found, which)
@@ -592,14 +592,11 @@ def identify(frame=None, wait: bool = True, learn: bool = True) -> list[dict]:
 
     # The ordinary picture first.
     why = {}
-    people = [[f, _match(f["embedding"], db)] for f in _faces_in(frame, why=why)]
-
-    # Nothing found, but the tracker can see a face? Straighten it and look
-    # again. This is the difference between working and not working when
+    # _look_for_faces straightens the picture and tries again if the plain
+    # detector finds nothing — the difference between working and not when
     # he's lying on his bed with his head on its side.
-    if not people:
-        for f in _from_hint(frame, why):
-            _merge_face(people, f, _match(f["embedding"], db))
+    people = [[f, _match(f["embedding"], db)]
+              for f in _look_for_faces(frame, why)]
 
     # Anyone it couldn't put a name to gets a second attempt on a lifted
     # picture. Measured, not assumed: lifting a face that was already lit
@@ -692,6 +689,20 @@ def note_face(box, angle: float) -> None:
     """Called by the tracker: 'there's a face here, tilted this much'."""
     MESH_HINT.update(box=[int(v) for v in box], angle=float(angle),
                      at=time.time())
+
+
+def _look_for_faces(frame, why: dict = None) -> list[dict]:
+    """Find faces the normal way, and if that finds none, the tilted way.
+
+    Everything that looks for a face goes through here — recognising,
+    enrolling, and the watching-him-move sweep. They have to agree: if
+    enrolment can only see him upright while recognition can see him lying
+    down, he'd be storing one kind of look and being compared as another.
+    """
+    if why is None:
+        why = {}
+    found = _faces_in(frame, why=why)
+    return found or _from_hint(frame, why)
 
 
 def _from_hint(frame, why: dict) -> list[dict]:

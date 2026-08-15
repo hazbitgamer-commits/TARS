@@ -176,7 +176,7 @@ def run_sweep(db, anchor, looks):
     queue = list(looks)
     F.get_frame = lambda: (queue[0] if queue else None)
 
-    def fake_faces_in(frame, lift=False):
+    def fake_faces_in(frame, lift=False, why=None):
         if not queue:
             return []
         vec = queue.pop(0)
