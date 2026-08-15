@@ -270,6 +270,70 @@ def wants_stream(lowered: str) -> tuple[str, str]:
     return "", ""
 
 
+# Presence — "watch for me". Kept apart from the room guard on purpose:
+# guard is about someone ELSE walking in, this is about HIM walking off, and
+# routing one to the other would arm the wrong thing entirely.
+_PRESENCE_ON = re.compile(
+    r"\bwatch (?:out )?for me\b|\bkeep an eye out for me\b"
+    r"|\block (?:my|the) (?:pc|computer|screen|laptop) when i (?:leave|go)\b"
+    r"|\bpause (?:my )?(?:music|it|the music) when i (?:leave|walk away|go)\b"
+    r"|\b(?:notice|tell) (?:me )?when i(?:.m| am)? (?:back|away)\b")
+# Only the explicit phrasings here. A BARE "stop watching" is caught further
+# up by the gesture-camera handler, which now disarms this one too — two
+# camera features answering to the same three words, with one of them
+# silently staying on, is the exact bluff that handler was written to stop.
+_PRESENCE_OFF = re.compile(
+    r"\bstop watching (?:out )?for me\b|\bstop keeping an eye\b"
+    r"|\b(?:turn off|stop|disable) presence\b"
+    r"|\bstop watching me\b")
+_PRESENCE_STATUS = re.compile(
+    r"\bare (?:you|u) watching for me\b|\bpresence status\b"
+    r"|\bare (?:you|u) keeping an eye\b")
+
+
+def wants_presence(lowered: str) -> str:
+    """'on', 'off', 'status', or '' when this isn't about it."""
+    if _PRESENCE_OFF.search(lowered):
+        return "off"
+    if _PRESENCE_STATUS.search(lowered):
+        return "status"
+    if _PRESENCE_ON.search(lowered):
+        return "on"
+    return ""
+
+
+# "Clip that" has to be its own gate, because to a router it looks like a
+# dozen other things — clipping audio, a video call, a screenshot. The tell
+# is that it's always about something that has ALREADY happened.
+_CLIP_NOW = re.compile(
+    r"\bclip (?:that|this|it)\b|\bclip the last\b|\bsave (?:that|this) clip\b"
+    r"|\bdid (?:you|u) (?:get|catch|record) that\b"
+    r"|\b(?:save|send me) (?:that|the last)\b[^.?]{0,20}\b(?:clip|moment|play|goal)\b"
+    r"|\bhighlight that\b")
+_CLIP_OFF = re.compile(
+    r"\b(?:stop|turn off|disable)\s+(?:the\s+)?highlights?\b"
+    r"|\bstop (?:recording|clipping)\b")
+_CLIP_ON = re.compile(r"\b(?:start|turn on|enable)\s+(?:the\s+)?highlights?\b")
+_CLIP_STATUS = re.compile(
+    r"\bare (?:you|u) recording\b|\bhighlights? status\b"
+    r"|\bhave (?:you|u) got the last\b")
+_CLIP_SECS = re.compile(r"\blast (\d+)\s*seconds?\b")
+
+
+def wants_clip(lowered: str) -> tuple[str, int]:
+    """(action, seconds) — action is '' when this isn't about clipping."""
+    if _CLIP_OFF.search(lowered):
+        return "off", 0
+    if _CLIP_ON.search(lowered):
+        return "on", 0
+    if _CLIP_STATUS.search(lowered):
+        return "status", 0
+    if _CLIP_NOW.search(lowered):
+        found = _CLIP_SECS.search(lowered)
+        return "clip", int(found.group(1)) if found else 0
+    return "", 0
+
+
 # Screen Rewind. Questions about something that WAS on the screen look, to a
 # router, exactly like questions about his notes — "what was that thing about
 # the assignment" could be either. So the past tense plus a screen-ish word
@@ -691,8 +755,19 @@ class Brain:
         if re.search(r"\b(stop|turn off|shut off|that'?s enough|close)\b"
                      r".{0,20}\b(watch\w*|camera|signals?|gestures?)\b|"
                      r"^stop watching\b", lowered.strip()) and \
-                not re.search(r"\bscreen\b|\bdownload\b", lowered):
+                not re.search(r"\bscreen\b|\bdownload\b|\bfor me\b"
+                              r"|\bpresence\b|\bwatching me\b", lowered):
             result = self.skills.run("signals", {"action": "stop"})
+            # a bare "stop watching" has to mean EVERY camera. Leaving the
+            # presence watch running here would be the same silent lie this
+            # branch exists to prevent, just with a different camera.
+            try:
+                import presence
+
+                if presence.armed():
+                    result += " " + presence.turn(False)
+            except Exception:
+                pass
             # "watch for hand signals" and "tell me when the download
             # finishes" both answer to "watching" — a bare "stop watching"
             # only ever reaches the camera above, so a screen watch left
@@ -1069,6 +1144,23 @@ class Brain:
         guard_action = wants_guard(lowered)
         if guard_action:
             result = self.skills.run("guard", {"action": guard_action})
+            self.history += [{"role": "user", "content": text},
+                             {"role": "assistant", "content": result}]
+            return result
+
+        presence_action = wants_presence(lowered)
+        if presence_action:
+            result = self.skills.run("presence", {"action": presence_action})
+            self.history += [{"role": "user", "content": text},
+                             {"role": "assistant", "content": result}]
+            return result
+
+        clip_action, clip_secs = wants_clip(lowered)
+        if clip_action:
+            args = {"action": clip_action}
+            if clip_secs:
+                args["seconds"] = clip_secs
+            result = self.skills.run("clip", args)
             self.history += [{"role": "user", "content": text},
                              {"role": "assistant", "content": result}]
             return result

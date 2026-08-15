@@ -311,6 +311,16 @@ def main() -> None:
     # bring the PC back from a shutdown or a blackout.
     import rewind
 
+    import presence
+
+    presence.start()  # ARMED ONLY — the camera does nothing until he says
+    # "watch for me", because the standing rule is that the webcam opens on
+    # an explicit word and nothing else.
+    import highlights
+
+    highlights.start()  # holds the last 30 seconds of any game in memory, so
+    # "clip that" catches the thing that already happened rather than starting
+    # a recording after it.
     rewind.start()  # remembers screens he actually settles on, so he can ask
     # about them later. Skips password managers, banking and private windows
     # before the screenshot is taken, and says out loud that it's running.
