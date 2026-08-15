@@ -7,6 +7,7 @@ People/ so details attach to them like any other memory.
 import datetime
 import difflib
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -73,6 +74,7 @@ ZOOM_MIN, ZOOM_MAX, ZOOM_STEP = 1.0, 3.0, 0.5
 
 
 ready = False  # models loaded? the live feed won't wait for them
+_warming = False
 
 
 def warmup() -> None:
@@ -85,6 +87,38 @@ def warmup() -> None:
         ready = True
     except Exception:
         pass
+
+
+def _warm_soon() -> None:
+    """Start warming up, in the background, and come back immediately.
+
+    This exists because of a deadlock that made recognition impossible.
+    identify(wait=False) — which is what the live tracker and the room
+    guard both use — returned empty whenever the models weren't warm yet,
+    but returned BEFORE doing the one thing that marks them warm. Nothing
+    else warmed them either, except opening the dashboard's camera page.
+
+    So on the livestream, or on guard duty, every face was UNKNOWN forever:
+    not a bad match, not a threshold being too strict — the recogniser was
+    never asked in the first place. It failed silently and looked exactly
+    like a face it couldn't place, which is what made it so hard to see.
+
+    Now a caller that can't wait sets the loading going instead of just
+    giving up, and the next call a couple of seconds later works.
+    """
+    global _warming
+    if ready or _warming:
+        return
+    _warming = True
+
+    def work():
+        global _warming
+        try:
+            warmup()
+        finally:
+            _warming = False
+
+    threading.Thread(target=work, daemon=True).start()
 
 
 def _db() -> dict:
@@ -531,6 +565,7 @@ def identify(frame=None, wait: bool = True, learn: bool = True) -> list[dict]:
     """
     global ready
     if not ready and not wait:
+        _warm_soon()          # ...rather than giving up forever
         return []
     if frame is None:
         frame = get_frame()

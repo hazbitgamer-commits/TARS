@@ -226,6 +226,47 @@ check("but it stays well clear of a different person",
 check("learning is still far stricter than naming",
       F.LEARN_THRESHOLD < F.MATCH_THRESHOLD / 2, True)
 
+print("\nthe deadlock that made every face UNKNOWN forever")
+# identify(wait=False) is what the live tracker and the room guard use. It
+# used to give up whenever the models weren't warm, without ever starting
+# them warming — and nothing else did either unless the dashboard camera
+# page happened to be open. So recognition simply never ran, and looked
+# from the outside exactly like a face it couldn't place.
+was_ready, was_warming = F.ready, F._warming
+started = []
+real_thread = F.threading.Thread
+
+
+class FakeThread:
+    def __init__(self, target=None, daemon=None, **kw):
+        started.append(target)
+
+    def start(self):
+        pass
+
+
+try:
+    F.ready = False
+    F._warming = False
+    F.threading.Thread = FakeThread
+    out = F.identify(frame=None, wait=False)
+    check("a caller that can't wait still gets an instant empty answer", out, [])
+    check("but it kicked the models off loading instead of giving up",
+          len(started), 1)
+
+    started.clear()
+    F.identify(frame=None, wait=False)
+    check("and it doesn't pile up a thread per frame", len(started), 0)
+
+    started.clear()
+    F._warming = False
+    F.ready = True
+    F.identify(frame=None, wait=False)
+    check("once warm it never warms again", len(started), 0)
+finally:
+    F.threading.Thread = real_thread
+    F.ready, F._warming = was_ready, was_warming
+
 print("\nbrightness reading")
 try:
     check("black reads as dark",
