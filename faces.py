@@ -22,8 +22,27 @@ DB_FILE = FACES_DIR / "faces.json"
 
 MODEL = "SFace"           # small + quick on CPU
 DETECTOR = "yunet"        # opencv-5 wheels dropped the old haar files
-MATCH_THRESHOLD = 0.55    # cosine distance — lower is stricter
+# Cosine distance — lower is stricter. Raised from 0.55 after measuring the
+# actual numbers rather than guessing at them: two genuine pictures of the
+# same person in his own database sit up to 0.68 apart, while the two
+# DIFFERENT people in it are 0.79 apart. At 0.55 a real change of angle was
+# further away than the bar allowed, so he went unrecognised while turned
+# slightly away from the camera. 0.62 covers far more of one person's own
+# variation and still leaves clear air before anybody else.
+MATCH_THRESHOLD = 0.62
 MIN_FACE = 60             # px — ignore tiny background "faces"
+
+# Enrolling watches for a few seconds instead of taking one photograph.
+# One photo is one angle in one light, and a face genuinely moves further
+# than the recognition threshold just by turning away from the camera — so
+# a single-photo enrolment leaves someone unrecognisable the moment they
+# stop posing for it. Worse, the learning that's meant to fix that over
+# time can only ever start AFTER a successful match, so a bad starting
+# point never gets the chance to improve itself. Watching him move for a
+# few seconds seeds the set with real variation instead.
+SWEEP_SECONDS = 8.0       # how long to watch while enrolling
+SWEEP_GAP = 0.4           # seconds between looks, so they aren't near-copies
+SWEEP_MAX = 0.62          # a sweep look must still clearly be the same person
 
 # ---- learning a face over time ----------------------------------------
 # One enrolment photo is one lighting, one angle, one expression, and every
@@ -336,9 +355,43 @@ def _pick(found: list, which: str):
     return None if len(found) > 1 else (by_size[0], "")
 
 
+def _sweep(name: str, db: dict, anchor: np.ndarray) -> int:
+    """Keep watching for a few seconds and collect the OTHER ways he looks.
+
+    Every look is checked back against the photo just enrolled, so somebody
+    walking behind him mid-sweep can't quietly be enrolled as him — and each
+    one has to be different enough from what's already stored to be worth
+    keeping, so eight seconds of sitting still adds nothing rather than
+    eight copies of the same face.
+    """
+    entry = db[name]
+    added = 0
+    until = time.time() + SWEEP_SECONDS
+    while time.time() < until:
+        time.sleep(SWEEP_GAP)
+        frame = get_frame()
+        if frame is None:
+            continue
+        found = _faces_in(frame)
+        if not found:
+            continue
+        look = max(found, key=lambda f: f["box"][2] * f["box"][3])["embedding"]
+        if 1.0 - float(look @ anchor) > SWEEP_MAX:
+            continue                      # not clearly the same person
+        known = [np.array(e, dtype=np.float32) for e in entry["embeddings"]]
+        if known and min(1.0 - float(look @ k) for k in known) < LEARN_MIN_NEW:
+            continue                      # already have this look
+        entry["embeddings"].append(look.tolist())
+        added += 1
+        if len(entry["embeddings"]) >= MAX_GALLERY:
+            break
+    return added
+
+
 def enroll(name: str, frame=None, which: str = "") -> str:
     import cv2
 
+    watching = frame is None      # a live enrolment can watch him move
     if frame is None:
         frame = get_frame()
     if frame is None:
@@ -363,6 +416,17 @@ def enroll(name: str, frame=None, which: str = "") -> str:
     entry["embeddings"] = ([target["embedding"].tolist()]
                            + entry.get("embeddings", []))[:MAX_GALLERY]
     entry["learned"] = entry["learned"] or datetime.date.today().isoformat()
+
+    picked_up = 0
+    if watching:
+        try:
+            import announce
+
+            announce.post(f"Learning {name}'s face — keep looking at me and "
+                          f"slowly turn your head side to side.")
+        except Exception:
+            pass
+        picked_up = _sweep(name, db, target["embedding"])
     _save_db(db)
 
     x, y, w, h = target["box"]
@@ -383,7 +447,14 @@ def enroll(name: str, frame=None, which: str = "") -> str:
         LAST_LEARNED.write_text(name, encoding="utf-8")
     except OSError:
         pass
-    return (f"Got it — I'll recognise {name} now.{extra} "
+    looks = ""
+    if watching:
+        looks = (f" I watched for a few seconds and picked up {picked_up} "
+                 f"more ways you look." if picked_up else
+                 " I couldn't get any other angles, so say it again and move "
+                 "your head about a bit — it recognises you far better with "
+                 "more than one look to go on.")
+    return (f"Got it — I'll recognise {name} now.{extra}{looks} "
             f"If I misheard the name, say: no, wrong name.")
 
 

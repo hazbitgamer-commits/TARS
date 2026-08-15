@@ -157,6 +157,75 @@ F._merge_face(people, {"box": (100, 100, 80, 80)}, ("OTHER", 50, 0.50))
 check("a WORSE second answer never overwrites a good one",
       people[0][1][0], "OWNER")
 
+print("\nenrolling watches him move, and won't be fooled mid-sweep")
+seen_by_sweep = []
+
+
+def fake_camera(*looks):
+    """Hand the sweep a scripted series of faces, one per grab."""
+    queue = list(looks)
+
+    def grab():
+        return queue.pop(0) if queue else None
+    return grab
+
+
+def run_sweep(db, anchor, looks):
+    """Drive _sweep against scripted faces instead of a real camera."""
+    real_frame, real_faces, real_sleep = F.get_frame, F._faces_in, __import__("time").sleep
+    queue = list(looks)
+    F.get_frame = lambda: (queue[0] if queue else None)
+
+    def fake_faces_in(frame, lift=False):
+        if not queue:
+            return []
+        vec = queue.pop(0)
+        return [{"embedding": vec, "box": (10, 10, 90, 90)}]
+
+    F._faces_in = fake_faces_in
+    F.time.sleep = lambda s: None
+    ticks = [0.0]
+
+    def clock():
+        ticks[0] += 1.0
+        return ticks[0]
+    real_time = F.time.time
+    F.time.time = clock
+    try:
+        return F._sweep("OWNER", db, anchor)
+    finally:
+        F.get_frame, F._faces_in = real_frame, real_faces
+        F.time.sleep, F.time.time = real_sleep, real_time
+
+
+db = fresh(BASE_FACE)
+added = run_sweep(db, BASE_FACE,
+                  [sideways(1, 0.6), sideways(2, 0.6), sideways(3, 0.6)])
+check("different angles of him are collected", added, 3)
+check("and stored", len(db["OWNER"]["embeddings"]), 4)
+
+db = fresh(BASE_FACE)
+added = run_sweep(db, BASE_FACE, [BASE_FACE, BASE_FACE, BASE_FACE])
+check("sitting perfectly still adds nothing", added, 0)
+
+db = fresh(BASE_FACE)
+stranger = unit(0, 1, 0, 0, 0)
+added = run_sweep(db, BASE_FACE, [stranger, stranger, sideways(1, 0.6)])
+check("someone walking past mid-sweep is NOT enrolled as him", added, 1)
+check("only his own look was kept", len(db["OWNER"]["embeddings"]), 2)
+
+db = fresh(BASE_FACE)
+added = run_sweep(db, BASE_FACE, [])
+check("an empty room during the sweep is harmless", added, 0)
+
+print("\nthe threshold covers his own variation")
+check("a face 0.60 away is now recognised, where 0.55 rejected it",
+      F.MATCH_THRESHOLD > 0.60, True)
+check("but it stays well clear of a different person",
+      F.MATCH_THRESHOLD < 0.78, True)
+check("learning is still far stricter than naming",
+      F.LEARN_THRESHOLD < F.MATCH_THRESHOLD / 2, True)
+
 print("\nbrightness reading")
 try:
     check("black reads as dark",
