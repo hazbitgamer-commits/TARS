@@ -295,6 +295,20 @@ def _watch() -> None:
                 last_tidy = time.time()
                 _tidy()
 
+            # Not while he's gaming. Two things want the screen at once then,
+            # and a screenshot of a match is a picture of a match — there's
+            # no text on it worth reading later, so a second grab plus a
+            # second of OCR is spent for nothing at the exact moment the
+            # machine can least afford it.
+            try:
+                import game_watch
+
+                if game_watch.playing_now():
+                    pending = None
+                    continue
+            except Exception:
+                pass
+
             title = _title()
             if _private(title):
                 pending = None            # never even take the picture

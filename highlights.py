@@ -27,15 +27,23 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent
 CLIPS = BASE / "clips"
 
-FPS = 12                 # smooth enough to watch, cheap enough to keep
-SECONDS = 30             # how much is always in memory
-WIDTH = 960
+# 8, not 12. Grabbing a 2560x1440 screen costs about 29ms no matter what
+# size it's scaled to afterwards — the grab dominates, so frame rate is the
+# only lever. At 12fps that was ~40% of a core burning the whole time he
+# played, for footage nobody watches frame-by-frame.
+FPS = 8
+SECONDS = 25             # how much is always in memory
+WIDTH = 854
 QUALITY = 50
 COOLDOWN = 90            # seconds between automatic clips, so it can't spam
 LOUD_FACTOR = 2.6        # this much above the recent normal counts as a moment
 LOUD_FLOOR = 0.06        # ...and it has to be genuinely loud, not 2.6x silence
 BASELINE_SECONDS = 60
 KEEP_CLIPS = 40
+# Telegram takes 50MB from a bot, but a 29MB clip over a home connection
+# WHILE he's gaming takes minutes. Anything bigger than this is left on the
+# PC and he's told where it is, rather than pretending to send it.
+MAX_SEND_MB = 20
 
 _frames = deque(maxlen=FPS * SECONDS)
 _loudness = deque(maxlen=int(BASELINE_SECONDS * 2))    # one every half second
@@ -145,8 +153,14 @@ def save(reason: str = "", send: bool = False, seconds: int = SECONDS) -> str:
     path = CLIPS / (time.strftime("%Y-%m-%d_%H%M%S") + ".mp4")
     first = cv2.imdecode(np.frombuffer(frames[0][1], np.uint8), cv2.IMREAD_COLOR)
     height, width = first.shape[:2]
-    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"),
+    # H.264 where it exists, which it does here: the same 30 seconds came
+    # out 29MB as mp4v and about a fifth of that as avc1. mp4v is kept as a
+    # fallback so a machine without the codec still gets a clip.
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"avc1"),
                              FPS, (width, height))
+    if not writer.isOpened():
+        writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"),
+                                 FPS, (width, height))
     try:
         for _, jpeg in frames:
             frame = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
@@ -158,13 +172,30 @@ def save(reason: str = "", send: bool = False, seconds: int = SECONDS) -> str:
     _tidy()
 
     length = round(frames[-1][0] - frames[0][0])
-    if send:
-        try:
-            import tars_phone
+    size = path.stat().st_size / 1e6
 
-            tars_phone.send_video(path, caption=(reason or "Clip") + f" — {length}s")
-        except Exception:
-            pass
+    # NEVER upload on the caller's thread. This is called from a skill, which
+    # runs on the conversation loop, and that loop stops the microphone
+    # before it speaks. A 29MB upload over a gaming connection took minutes,
+    # and for every one of them TARS was alive, answering the dashboard, and
+    # completely deaf — the mic was never restarted because the reply never
+    # finished. One slow upload cost the whole assistant.
+    if send and size <= MAX_SEND_MB:
+        def deliver():
+            try:
+                import tars_phone
+
+                tars_phone.send_video(
+                    path, caption=(reason or "Clip") + f" — {length}s")
+            except Exception:
+                pass
+
+        threading.Thread(target=deliver, daemon=True).start()
+        return f"Clipped the last {length} seconds — sending it to your phone."
+    if send:
+        return (f"Clipped the last {length} seconds, but it's {size:.0f}MB — "
+                f"too big to send without tying things up. It's in the clips "
+                f"folder.")
     return f"Clipped the last {length} seconds — saved to clips."
 
 
