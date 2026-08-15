@@ -99,21 +99,53 @@ check("a face is never smoothed against a hand in the same place",
 
 print("\nnames — 'if i smile, or turn my head it loses me'")
 reset()
-vt._names["people"] = [{"name": "OWNER", "box": (100, 100, 200, 200)}]
-check("named while DeepFace can see him", vt._name_for(150, 150, 100, 100), "OWNER")
+vt._names["people"] = [{"name": "OWNER", "score": 88,
+                        "box": (100, 100, 200, 200)}]
+check("named while DeepFace can see him", vt._name_for(150, 150, 100, 100)[0], "OWNER")
 vt._names["people"] = []                                   # he smiles; match fails
-check("still named through a failed match", vt._name_for(150, 150, 100, 100), "OWNER")
-check("the name follows him as he moves", vt._name_for(180, 170, 100, 100), "OWNER")
+check("still named through a failed match", vt._name_for(150, 150, 100, 100)[0], "OWNER")
+check("the name follows him as he moves", vt._name_for(180, 170, 100, 100)[0], "OWNER")
 for seen in vt._sticky:
     seen["at"] = time.time() - vt.NAME_STICKS_FOR - 1
-check("but it does expire eventually", vt._name_for(150, 150, 100, 100), "")
+check("but it does expire eventually", vt._name_for(150, 150, 100, 100)[0], "")
 
 reset()
-vt._names["people"] = [{"name": "OWNER", "box": (100, 100, 200, 200)}]
+vt._names["people"] = [{"name": "OWNER", "score": 88,
+                        "box": (100, 100, 200, 200)}]
 vt._name_for(150, 150, 100, 100)
 vt._names["people"] = []
 check("a different face across the room doesn't inherit his name",
-      vt._name_for(900, 600, 100, 100), "")
+      vt._name_for(900, 600, 100, 100)[0], "")
+
+print("\nhow-sure score travels with the name")
+reset()
+vt._names["people"] = [{"name": "OWNER", "score": 88,
+                        "box": (100, 100, 200, 200)}]
+check("the score arrives with the name", vt._name_for(150, 150, 100, 100)[1], 88)
+vt._names["people"] = []
+check("and survives a failed match, exactly as the name does",
+      vt._name_for(150, 150, 100, 100)[1], 88)
+
+print("\nthe face mesh is a pattern, not a scatter of dots")
+try:
+    import cv2 as _cv2
+    import numpy as _np
+
+    web, edges = vt._mesh_shape()
+    check("the mesh wiring loaded", bool(web), True)
+    ring = [(320 + int(90 * _np.cos(i / 76.0)), 240 + int(90 * _np.sin(i / 76.0)))
+            for i in range(478)]
+    canvas = _np.zeros((480, 640, 3), dtype=_np.uint8)
+    vt._mesh(canvas, ring)
+    joined = int((canvas.sum(axis=2) > 0).sum())
+    loose = _np.zeros((480, 640, 3), dtype=_np.uint8)
+    for px, py in ring[::4]:
+        _cv2.circle(loose, (px, py), 1, vt.CYAN_DIM, -1)
+    scattered = int((loose.sum(axis=2) > 0).sum())
+    check("the joined-up mesh covers far more than the old loose dots",
+          joined > scattered * 3, True)
+except ImportError:
+    print("  (skipped — no cv2/numpy)")
 
 print("\nvisibility — a guessed limb is worse than no limb")
 

@@ -25,6 +25,26 @@ DETECTOR = "yunet"        # opencv-5 wheels dropped the old haar files
 MATCH_THRESHOLD = 0.55    # cosine distance — lower is stricter
 MIN_FACE = 60             # px — ignore tiny background "faces"
 
+# ---- learning a face over time ----------------------------------------
+# One enrolment photo is one lighting, one angle, one expression, and every
+# face that isn't that gets compared against it and missed. So every time a
+# face is recognised CONFIDENTLY, that look is kept — a grin, a side-on
+# head, a dark room. The set of known looks grows with use, and recognition
+# gets better at exactly the conditions it's actually used in.
+#
+# The danger is drift: learn from a shaky match and the wrong person's face
+# quietly joins the set, after which everything matches everyone. So the bar
+# to LEARN is much stricter than the bar to NAME.
+LEARN_THRESHOLD = 0.30    # must be well inside MATCH_THRESHOLD to be learnt
+LEARN_MIN_NEW = 0.10      # and different enough from what's already known
+MAX_GALLERY = 40          # looks kept per person before the dullest is dropped
+
+# Below this average brightness the picture is lifted before recognition.
+# A dark room doesn't change the shape of a face, but it does flatten the
+# contrast the model reads, which is why it can see a face there and still
+# not know whose it is.
+DARK_ENOUGH = 80
+
 # "zoom in" — digital crop-and-enlarge on the webcam feed, for someone too
 # far away or too dim to make out ("I can't make out a face — more light,
 # or come closer"). Not owner data, so it lives at the root next to the
@@ -57,6 +77,17 @@ def _db() -> dict:
 
 def _save_db(db: dict) -> None:
     FACES_DIR.mkdir(exist_ok=True)
+    # This file now rewrites itself as faces are learnt, so the enrolments
+    # he made by hand are kept once, untouched, before anything automatic
+    # ever edits them. If learning were ever to go wrong there'd otherwise
+    # be nothing to go back to.
+    backup = DB_FILE.with_suffix(".json.original")
+    if DB_FILE.exists() and not backup.exists():
+        try:
+            backup.write_text(DB_FILE.read_text(encoding="utf-8"),
+                              encoding="utf-8")
+        except OSError:
+            pass
     DB_FILE.write_text(json.dumps(db, indent=1), encoding="utf-8")
 
 
@@ -137,7 +168,11 @@ def get_frame():
                 for _ in range(6):
                     ok, frame = cap.read()
             if ok:
-                return _apply_zoom(frame, zoom)
+                # mirrored to match the live feed exactly. If enrolment saw
+                # an unmirrored face and the feed a mirrored one, every face
+                # would be learnt the wrong way round from the one it's later
+                # compared against.
+                return _apply_zoom(cv2.flip(frame, 1), zoom)
         finally:
             cap.release()
     except Exception:
@@ -145,10 +180,51 @@ def get_frame():
     return None
 
 
-def _faces_in(frame) -> list[dict]:
+def brightness(frame) -> float:
+    """Average brightness, 0 (black) to 255.
+
+    Every 8th pixel in each direction, which is a 64th of the work and
+    lands within a fraction of a point of the true average — this is called
+    on every single frame of the live feed, where reading all two million
+    pixels cost more than some of the detectors do.
+    """
+    try:
+        return float(np.asarray(frame)[::8, ::8].mean())
+    except Exception:
+        return 255.0
+
+
+def _lift(frame):
+    """Pull a dark frame up so recognition has something to read.
+
+    His words: "if my room is dark he cant figure out who i am, but he sees
+    a face". That split is the clue — finding a face needs only edges, which
+    survive the dark, but knowing WHOSE face needs the fine contrast across
+    it, and that's what's been crushed into near-black.
+
+    CLAHE on the lightness channel only, so colour is untouched: it lifts
+    the dim parts of the face without blowing out a lamp behind him, which
+    is what a plain brightness/gamma boost does. Applied only when it's
+    actually dark, so a well-lit face is compared exactly as it always was
+    and nothing that already works starts behaving differently.
+    """
+    import cv2
+
+    lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+    lightness, a, b = cv2.split(lab)
+    lightness = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8)).apply(lightness)
+    return cv2.cvtColor(cv2.merge((lightness, a, b)), cv2.COLOR_LAB2BGR)
+
+
+def _faces_in(frame, lift: bool = False) -> list[dict]:
     """[{embedding, box(x,y,w,h)}] for every real face in the frame."""
     from deepface import DeepFace
 
+    if lift:
+        try:
+            frame = _lift(frame)
+        except Exception:
+            pass
     try:
         reps = DeepFace.represent(frame, model_name=MODEL,
                                   detector_backend=DETECTOR,
@@ -170,7 +246,13 @@ def _faces_in(frame) -> list[dict]:
     return out
 
 
-def _match(vec: np.ndarray, db: dict) -> str | None:
+def _match(vec: np.ndarray, db: dict) -> tuple:
+    """(name, how sure, raw distance) — the closest known look to this face.
+
+    Returns the name only when it's inside MATCH_THRESHOLD, but hands back
+    the distance either way so the caller can decide whether it's worth
+    learning from.
+    """
     best_name, best_dist = None, 1.0
     for name, info in db.items():
         for known in info.get("embeddings", []):
@@ -178,7 +260,61 @@ def _match(vec: np.ndarray, db: dict) -> str | None:
             dist = 1.0 - float(vec @ k)
             if dist < best_dist:
                 best_name, best_dist = name, dist
-    return best_name if best_dist < MATCH_THRESHOLD else None
+    if best_dist >= MATCH_THRESHOLD:
+        return None, 0, best_dist
+    # cosine similarity as a percentage: 100% is the identical picture,
+    # ~45% is the loosest thing still called a match. Shown next to the
+    # name so a shaky identification looks shaky instead of certain.
+    return best_name, max(1, min(100, round((1.0 - best_dist) * 100))), best_dist
+
+
+def _learn(name: str, vec: np.ndarray, db: dict, dist: float) -> bool:
+    """Keep this look, if it's both trustworthy and new. True if it was kept.
+
+    Two gates, and both matter:
+      - trustworthy: a marginal match must never be learnt from. If it were,
+        one wrong guess would be remembered as fact, the next wrong guess
+        would match against it more easily, and the set would slide onto
+        someone else's face. Learning only from near-certain matches keeps
+        that from ever starting.
+      - new: a hundred copies of the same straight-on look teaches nothing
+        and just slows every future comparison down. Only a look that's
+        meaningfully different from everything already known is worth space.
+    """
+    if dist > LEARN_THRESHOLD:
+        return False
+    entry = db.get(name)
+    if entry is None:
+        return False
+    known = [np.array(e, dtype=np.float32) for e in entry.get("embeddings", [])]
+    if known and min(1.0 - float(vec @ k) for k in known) < LEARN_MIN_NEW:
+        return False                       # already knows this look
+
+    entry.setdefault("embeddings", []).append(vec.tolist())
+    entry["seen"] = entry.get("seen", 0) + 1
+    entry["last_seen"] = datetime.date.today().isoformat()
+
+    if len(entry["embeddings"]) > MAX_GALLERY:
+        _drop_dullest(entry)
+    return True
+
+
+def _drop_dullest(entry: dict) -> None:
+    """Full up — drop whichever look teaches the least.
+
+    That's the one most similar to another look already kept, since between
+    two near-identical pictures one of them is redundant. Index 0 is never
+    dropped: that's the enrolment photo, the only look confirmed by a person
+    rather than by the system agreeing with itself.
+    """
+    vecs = [np.array(e, dtype=np.float32) for e in entry["embeddings"]]
+    twin, closest = None, 2.0
+    for i in range(1, len(vecs)):
+        for j in range(i + 1, len(vecs)):
+            gap = 1.0 - float(vecs[i] @ vecs[j])
+            if gap < closest:
+                twin, closest = j, gap
+    entry["embeddings"].pop(twin if twin is not None else 1)
 
 
 def _pick(found: list, which: str):
@@ -221,7 +357,11 @@ def enroll(name: str, frame=None, which: str = "") -> str:
 
     db = _db()
     entry = db.setdefault(name, {"embeddings": [], "learned": ""})
-    entry["embeddings"] = (entry["embeddings"] + [target["embedding"].tolist()])[-5:]
+    # newest enrolment goes FIRST and stays: it's the only look a person
+    # actually confirmed, so it's the one _drop_dullest must never bin, and
+    # the anchor everything learnt afterwards is measured against
+    entry["embeddings"] = ([target["embedding"].tolist()]
+                           + entry.get("embeddings", []))[:MAX_GALLERY]
     entry["learned"] = entry["learned"] or datetime.date.today().isoformat()
     _save_db(db)
 
@@ -309,10 +449,14 @@ def forget(name: str) -> str:
     return f"Done — I've forgotten {name}'s face, I won't recognise them anymore."
 
 
-def identify(frame=None, wait: bool = True) -> list[dict]:
-    """[{name or None, box}] for everyone in view.
+def identify(frame=None, wait: bool = True, learn: bool = True) -> list[dict]:
+    """[{name or None, score, box}] for everyone in view.
+
+    score is how sure, 1-100, and 0 when nobody is named.
 
     wait=False (the live feed): skip instantly unless models are already warm.
+    learn=False turns off remembering this look — for anywhere a wrong
+    answer shouldn't be allowed to teach anything.
     """
     global ready
     if not ready and not wait:
@@ -322,8 +466,94 @@ def identify(frame=None, wait: bool = True) -> list[dict]:
     if frame is None:
         return []
     db = _db()
+    _mirror_migrate(db)
+
+    # The ordinary picture first.
+    people = [[f, _match(f["embedding"], db)] for f in _faces_in(frame)]
+
+    # Anyone it couldn't put a name to gets a second attempt on a lifted
+    # picture. Measured, not assumed: lifting a face that was already lit
+    # well enough makes the match WORSE (0.24 to 0.38 on his own enrolment
+    # photo), because CLAHE rewrites contrast the recogniser was reading.
+    # But where it's dark enough that no face is found at all, the lift is
+    # the difference between a name and nothing. So it's a fallback, never
+    # a filter: a working identification can't be spoiled by it, and only
+    # the cases already failing get the second look.
+    if not people or any(match[0] is None for _, match in people):
+        for f in _faces_in(frame, lift=True):
+            _merge_face(people, f, _match(f["embedding"], db))
+
     out = []
-    for f in _faces_in(frame):
-        out.append({"name": _match(f["embedding"], db), "box": f["box"]})
+    learned = False
+    for f, (name, score, dist) in people:
+        if name and learn and _learn(name, f["embedding"], db, dist):
+            learned = True
+        out.append({"name": name, "score": score, "box": f["box"]})
+    if learned:
+        _save_db(db)
     ready = True
     return out
+
+
+def _merge_face(people: list, face: dict, match: tuple) -> None:
+    """Fold a second-attempt face into the results, best answer wins.
+
+    Same face or a new one is decided by where it is: two boxes whose
+    centres sit within half a face-width of each other are the same person
+    seen twice, not two people.
+    """
+    x, y, w, h = face["box"]
+    cx, cy = x + w / 2, y + h / 2
+    for slot in people:
+        px, py, pw, ph = slot[0]["box"]
+        if (abs(px + pw / 2 - cx) < max(w, pw) * 0.5
+                and abs(py + ph / 2 - cy) < max(h, ph) * 0.5):
+            if match[2] < slot[1][2]:          # closer match than we had
+                slot[0], slot[1] = face, match
+            return
+    people.append([face, match])
+
+
+MIRRORED_FLAG = FACES_DIR / "mirrored.flag"
+
+
+def _mirror_migrate(db: dict) -> None:
+    """Teach every known face its own mirror image, once.
+
+    The camera view is now flipped so his left hand is on the left of the
+    picture, the way a mirror shows it. A flipped face is not the same
+    picture to the recogniser — faces are close to symmetrical but not
+    actually symmetrical — so every face enrolled before the flip was at
+    risk of no longer matching itself.
+
+    That would have been a nasty failure: recognition stops, and because
+    learning only ever happens after a successful match, it could never
+    teach its way back out. So each saved enrolment photo is re-read
+    mirrored and added as another known look. Runs once, then leaves a flag.
+    """
+    if MIRRORED_FLAG.exists() or not db:
+        return
+    try:
+        import cv2
+
+        changed = False
+        for name in list(db):
+            photo = FACES_DIR / f"{name}.jpg"
+            if not photo.exists():
+                continue
+            image = cv2.imread(str(photo))
+            if image is None:
+                continue
+            found = _faces_in(cv2.flip(image, 1))
+            if not found:
+                continue
+            biggest = max(found, key=lambda f: f["box"][2] * f["box"][3])
+            db[name].setdefault("embeddings", []).append(
+                biggest["embedding"].tolist())
+            changed = True
+        if changed:
+            _save_db(db)
+        FACES_DIR.mkdir(exist_ok=True)
+        MIRRORED_FLAG.write_text("done", encoding="utf-8")
+    except Exception:
+        pass          # a failed migration must never stop recognition

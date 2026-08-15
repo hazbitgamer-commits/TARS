@@ -648,6 +648,7 @@ class Handler(BaseHTTPRequestHandler):
                 ok, frame = cap.read()
                 if not ok:
                     break
+                frame = cv2.flip(frame, 1)   # mirror: his left on the left
                 # share the CLEAN frame first — snapshot skills borrow this,
                 # so they never have to touch the camera hardware
                 ok, clean = cv2.imencode(".jpg", frame,

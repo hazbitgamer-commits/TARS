@@ -54,6 +54,8 @@ MIN_CONFIDENCE = 0.6
 # JARVIS HUD, in BGR because that's what OpenCV wants
 CYAN = (255, 214, 92)
 CYAN_DIM = (150, 130, 60)
+MESH_DIM = (200, 172, 78)   # the fine triangle web, blended down on use
+MESH_ALPHA = 0.34           # how much of the face the web is allowed to hide
 WHITE = (235, 245, 245)
 AMBER = (60, 190, 255)
 GREEN = (120, 230, 140)
@@ -151,7 +153,9 @@ def _identify_later(frame) -> None:
             import faces
 
             found = faces.identify(frame.copy(), wait=False)
-            _names["people"] = [{"name": f.get("name"), "box": f["box"]}
+            _names["people"] = [{"name": f.get("name"),
+                                 "score": f.get("score", 0),
+                                 "box": f["box"]}
                                 for f in found if f.get("box")]
         except Exception:
             pass
@@ -177,22 +181,25 @@ def _name_for(x: int, y: int, w: int, h: int) -> str:
     cx, cy = x + w / 2, y + h / 2
     now = time.time()
 
-    best, score = "", 0.0
+    best, score, widest = "", 0, 0.0
     for person in _names["people"]:
         px, py, pw, ph = person["box"]
         if px <= cx <= px + pw and py <= cy <= py + ph:
             overlap = min(w, pw) * min(h, ph)
-            if overlap > score and person.get("name"):
-                best, score = person["name"], overlap
+            if overlap > widest and person.get("name"):
+                best = person["name"]
+                score = person.get("score", 0)
+                widest = overlap
 
     if best:                                   # confident — remember it here
         for seen in _sticky:
             if math.hypot(seen["cx"] - cx, seen["cy"] - cy) < max(w, h):
-                seen.update(name=best, cx=cx, cy=cy, at=now)
+                seen.update(name=best, score=score, cx=cx, cy=cy, at=now)
                 break
         else:
-            _sticky.append({"name": best, "cx": cx, "cy": cy, "at": now})
-        return best
+            _sticky.append({"name": best, "score": score,
+                            "cx": cx, "cy": cy, "at": now})
+        return best, score
 
     # nothing fresh — has this face been named recently, roughly here?
     near = max(w, h) * 1.5
@@ -202,8 +209,8 @@ def _name_for(x: int, y: int, w: int, h: int) -> str:
             continue
         if math.hypot(seen["cx"] - cx, seen["cy"] - cy) < near:
             seen.update(cx=cx, cy=cy)          # follow the face as it moves
-            return seen["name"]
-    return ""
+            return seen["name"], seen.get("score", 0)
+    return "", 0
 
 
 _smoothed = []      # [{"kind", "points", "at"}] — one entry per tracked thing
@@ -256,6 +263,79 @@ def _smooth(kind: str, points: list) -> list:
                for (nx, ny), (ox, oy) in zip(points, best["points"])]
     best.update(points=blended, cx=cx, cy=cy, at=now)
     return blended
+
+
+_mesh_lines = {"loaded": False, "web": None, "edges": None}
+
+
+def _mesh_shape():
+    """The face mesh wiring, fetched once.
+
+    The 468 landmarks are just loose points until you know which ones join
+    up. MediaPipe ships that wiring: 2556 little triangles over the whole
+    face, plus the contours — eyes, brows, lips, jawline.
+    """
+    if not _mesh_lines["loaded"]:
+        _mesh_lines["loaded"] = True
+        try:
+            from mediapipe.tasks.python.vision import face_landmarker as fl
+
+            joins = fl.FaceLandmarksConnections
+            _mesh_lines["web"] = [(c.start, c.end)
+                                  for c in joins.FACE_LANDMARKS_TESSELATION]
+            _mesh_lines["edges"] = [(c.start, c.end)
+                                    for c in joins.FACE_LANDMARKS_CONTOURS]
+        except Exception:
+            pass
+    return _mesh_lines["web"], _mesh_lines["edges"]
+
+
+def _mesh(img, pts: list) -> None:
+    """Draw the face as a wire mesh rather than a scatter of dots.
+
+    His words: "the dots on my face should have a pattern". They didn't,
+    because only every 4th landmark was drawn and nothing joined them, so
+    468 carefully-placed points landed as speckle. Joined up, the same
+    points read as a mesh that sits on the face and moves with it.
+
+    Both layers go down with ONE polylines call each rather than 2556
+    separate line calls — same picture, but the looping happens in C
+    instead of Python, which is the difference between a few milliseconds
+    and most of the frame budget.
+    """
+    import cv2
+    import numpy as np
+
+    web, edges = _mesh_shape()
+    if not web:
+        for px, py in pts[::4]:              # no wiring available; dots it is
+            cv2.circle(img, (px, py), 1, CYAN_DIM, -1)
+        return
+    grid = np.array(pts, dtype=np.int32)
+    height, width = img.shape[:2]
+    xs, ys = grid[:, 0], grid[:, 1]
+    x0, y0 = max(0, int(xs.min()) - 2), max(0, int(ys.min()) - 2)
+    x1, y1 = min(width, int(xs.max()) + 3), min(height, int(ys.max()) + 3)
+    if x1 <= x0 or y1 <= y0:
+        return
+
+    # The web goes on see-through. Drawn solid, 2556 lines over a face this
+    # close together stop reading as a mesh and become a flat blue mask with
+    # a person hidden somewhere behind it. Blended at a third strength it
+    # sits ON the face instead of replacing it.
+    #
+    # Only the face's own rectangle is blended, not the whole frame — the
+    # cost of this is the area covered, and his face is a small part of it.
+    face = img[y0:y1, x0:x1]
+    layer = face.copy()
+    cv2.polylines(layer, (grid - (x0, y0))[np.array(web, dtype=np.int32)],
+                  False, MESH_DIM, 1)
+    cv2.addWeighted(layer, MESH_ALPHA, face, 1 - MESH_ALPHA, 0, dst=face)
+
+    # the features go on at full strength over the top, so eyes, brows, lips
+    # and jawline stay crisp against the soft web behind them
+    cv2.polylines(img, grid[np.array(edges, dtype=np.int32)], True, CYAN, 1,
+                  cv2.LINE_AA)
 
 
 def _px(landmark, width: int, height: int) -> tuple:
@@ -314,6 +394,14 @@ def _annotate(frame):
     global _clock
     _clock += 33
 
+    # too dark to recognise anyone? measured once, used by the face labels
+    try:
+        import faces
+
+        dark = faces.brightness(frame) < faces.DARK_ENOUGH
+    except Exception:
+        dark = False
+
     # ---- skeletons ------------------------------------------------------
     people = 0
     try:
@@ -323,14 +411,20 @@ def _annotate(frame):
             raw = [_px(p, width, height) for p in person]
             pts = _smooth("pose", raw)
             seen = [getattr(p, "visibility", 1.0) for p in person]
+            # a joint the model places OUTSIDE the picture is a guess about
+            # a limb that isn't in shot. Left in, it draws a line clean
+            # across the frame to a shoulder that was never on camera.
+            here = [0 <= px < width and 0 <= py < height for px, py in pts]
             for a, b in BONES:
                 if a >= len(pts) or b >= len(pts):
                     continue
                 if seen[a] < MIN_VISIBLE or seen[b] < MIN_VISIBLE:
                     continue     # a guessed limb drawn confidently looks mad
+                if not here[a] or not here[b]:
+                    continue
                 cv2.line(frame, pts[a], pts[b], CYAN, 2, cv2.LINE_AA)
             for i, (px, py) in enumerate(pts):
-                if i < 11 or seen[i] < MIN_VISIBLE:
+                if i < 11 or seen[i] < MIN_VISIBLE or not here[i]:
                     continue     # face points — the mesh does those better
                 cv2.circle(frame, (px, py), 4, WHITE, -1, cv2.LINE_AA)
                 cv2.circle(frame, (px, py), 7, CYAN_DIM, 1, cv2.LINE_AA)
@@ -347,14 +441,19 @@ def _annotate(frame):
             x, y = max(0, min(xs)), max(0, min(ys))
             w, h = max(1, max(xs) - x), max(1, max(ys) - y)
 
-            # the mesh: every 4th point, or 468 dots is a solid blob
-            for px, py in pts[::4]:
-                cv2.circle(frame, (px, py), 1, CYAN_DIM, -1)
+            _mesh(frame, pts)
 
-            name = _name_for(x, y, w, h)
+            name, score = _name_for(x, y, w, h)
             colour = GREEN if name else AMBER
             _brackets(frame, x, y, w, h, colour)
-            label = name.upper() if name else "UNKNOWN"
+            if name:
+                label = f"{name.upper()} {score}%" if score else name.upper()
+            elif dark:
+                # "it can see a face but not whose" is a lighting problem, and
+                # saying so is more use than a bare UNKNOWN he can't act on
+                label = "UNKNOWN - TOO DARK"
+            else:
+                label = "UNKNOWN"
             cv2.putText(frame, label, (x, max(16, y - 12)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, colour, 2, cv2.LINE_AA)
     except Exception:
@@ -376,6 +475,7 @@ def _annotate(frame):
     _identify_later(frame)
 
     # ---- the readout ----------------------------------------------------
+    _stats["dark"] = dark
     _stats["ms"] = (time.time() - started) * 1000
     _stats["people"] = people
     cv2.putText(frame, f"TRACKING {people}  {_stats['ms']:.0f}ms",

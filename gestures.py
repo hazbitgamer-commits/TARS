@@ -236,8 +236,13 @@ def _loop(minutes: float) -> None:
                 try:
                     import dashboard
 
+                    # mirrored to match every other camera view. Only the
+                    # SHARED copy is flipped, never the frame this module
+                    # tracks hands in — flipping that would swap which hand
+                    # is which and silently invert every gesture.
                     ok_jpg, buf = cv2.imencode(
-                        ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 72])
+                        ".jpg", cv2.flip(frame, 1),
+                        [int(cv2.IMWRITE_JPEG_QUALITY), 72])
                     if ok_jpg:
                         dashboard.LATEST_JPEG = (stamp, buf.tobytes())
                 except Exception:

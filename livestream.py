@@ -685,6 +685,13 @@ def _capture() -> None:
                 ok, frame = cap.read()
             except Exception:
                 ok, frame = False, None
+            if ok and frame is not None:
+                # Mirror, so his left hand is on the left of the picture the
+                # way it is in a mirror. Flipped HERE, at the source, so the
+                # overlay, the recognition and any snapshot all work off the
+                # same picture — flipping only at display would leave every
+                # skeleton and face box on the wrong side of the screen.
+                frame = cv2.flip(frame, 1)
             if not ok or frame is None:
                 # a webcam that's been unplugged, or grabbed by another app,
                 # must not silently end the stream — try to get it back
