@@ -2697,6 +2697,77 @@ class Brain:
                  r"writ|pull(?:ing)? up|speak|adjust|tun|set|increas|"
                  r"decreas|rais|lower|configur|enabl|disabl|connect")
 
+    # Asked to think of improvements to itself, TARS answered "On it —
+    # learning new voice commands for camera adjustments and boosting my
+    # sense of humour right away. Should take a few minutes", and a minute
+    # later "I'm just finishing up the updates." It was building nothing. It
+    # cannot: it has no way to write its own skills or retrain itself. The
+    # improve skill only writes SUGGESTIONS for the owner to approve.
+    #
+    # The action-claim check missed all of it, because every verb in it is an
+    # outward one — open, send, install. Nothing covered a claim about its
+    # own abilities, so "I'm learning" and "I'm finishing up the updates"
+    # read as harmless chat.
+    #
+    # This is worse than an ordinary bluff. An invented "opening Spotify" is
+    # obvious the moment Spotify doesn't open; invented self-improvement has
+    # nothing to check it against, so it just quietly never arrives, and the
+    # owner is left waiting for work that was never started.
+    # Deliberately narrower than it first looks. "I'm adding that to your
+    # list" and "I've written that down" are ordinary bluffs about ordinary
+    # jobs — the action check already has those, and answering them with
+    # "I can't change how I work" would be the wrong correction entirely.
+    # This one only fires on claims about its OWN abilities.
+    _SELF_WORK = re.compile(
+        r"\b(?:i'?m|i am|i'?ve|i have)\s+(?:just\s+|now\s+|already\s+)?"
+        r"(?:been\s+)?(?:finish\w*|learn\w*|teach\w*|train\w*|"
+        r"stud\w*|improv\w*|enhanc\w*|refin\w*|boost\w*|upgrad\w*|"
+        r"develop\w*|cod\w*)\b"
+        # "working on" only counts when the work is on ITSELF — "I'm working
+        # on your maths question" is a perfectly fair thing to say
+        r"|\b(?:i'?m|i am|i'?ve|i have)\s+(?:just\s+|now\s+)?(?:been\s+)?"
+        r"work\w*\s+on\s+(?:my|myself|it|that|these|those|the|a|an|some)?\s*"
+        r"(?:new\s+)?(?:updates?|upgrades?|skills?|features?|abilit\w+|"
+        r"code|improvements?|humou?r|understanding)\b"
+        # "...building a new skill", "...writing a feature" — the object is
+        # what makes these about itself rather than about a shopping list
+        r"|\b(?:i'?m|i am|i'?ve|i have)\s+(?:just\s+|now\s+)?(?:been\s+)?"
+        r"(?:build\w*|writ\w*|creat\w*|mak\w*|add\w*|program\w*)\s+"
+        r"(?:a|an|the|some|new|my)?\s*(?:new\s+)?"
+        r"(?:skills?|features?|abilit\w+|commands?|functions?|modules?|code)\b"
+        # a bare gerund aimed at itself: "enhancing my ability to…",
+        # "refining my understanding of your humour…"
+        r"|\b(?:enhanc|improv|refin|boost|upgrad|expand|develop|sharpen|"
+        r"train|updat)\w*\s+(?:my|its)\s+(?:own\s+)?"
+        r"(?:abilit\w+|understand\w+|skills?|sense|humou?r|knowledge|"
+        r"memory|code|grasp|awareness)\b"
+        r"|\b(?:i'?ll|i will|let me|i'?m going to|i am going to)\s+"
+        r"(?:go ahead and\s+)?(?:learn|teach|train|study|improve|enhance|"
+        r"refine|boost|upgrade|update|develop|rewrite|reprogram|retrain)\b"
+        r"|\bteach(?:ing)?\s+myself\b"
+        r"|\b(?:on it|consider it done)\b[^.!?]{0,40}\b(?:learn|updat|improv|"
+        r"add|build|boost|enhanc|refin)"
+        r"|\b(?:should|will|it'?ll)\s+take\s+(?:a\s+)?(?:few|couple|several)\s+"
+        r"(?:minutes|mins|seconds|hours)\b"
+        r"|\b(?:new|these|those|the)\s+(?:skills?|abilit\w+|updates?|"
+        r"upgrades?|features?)\s+(?:i'?ve|i have)\s+been\s+(?:learn|develop|"
+        r"build|work)\w*",
+        re.I)
+
+    SELF_WORK_LINE = (
+        "Correction — I can't change how I work, and nothing is being built "
+        "in the background. I can only suggest changes for you to approve. "
+        "If you want something added, it needs Claude to write it.")
+
+    def _self_upgrade_claim(self, reply: str) -> bool:
+        """Did it just claim to be improving ITSELF? Always false if so.
+
+        Chat replies only happen when no skill ran, and no skill can rewrite
+        TARS anyway — so a reply about its own upgrades is invented, every
+        time, with no exceptions worth carving out.
+        """
+        return bool(self._SELF_WORK.search(reply or ""))
+
     # skills a rescued guess must never reach — destructive, outward-facing,
     # or expensive. Everything else is fair game: the owner said "I don't care
     # about permissions, just open what I say to open".
@@ -3004,7 +3075,10 @@ class Brain:
         first_end = re.search(r"[.!?][\"']?\s", answer)
         if first_end and self._contentless(answer[:first_end.end()]):
             answer = self._strip_filler(answer[first_end.end():].strip())
-        if self._false_progress(answer) or self._action_claim(answer):
+        if self._self_upgrade_claim(answer):
+            # nothing to rescue — there is no skill that can do this
+            answer += " " + self.SELF_WORK_LINE
+        elif self._false_progress(answer) or self._action_claim(answer):
             rescued = self._rescue_action(text)
             answer = rescued if rescued else answer + " " + self.HONESTY_LINE
         ungrounded = self._invented_history(answer)
@@ -3234,8 +3308,12 @@ class Brain:
             full.append(held)  # the ENTIRE reply was the warm-up — keep it
             yield held
         answer = " ".join(full)
-        if answer and (self._false_progress(answer)
-                       or self._action_claim(answer)):
+        if answer and self._self_upgrade_claim(answer):
+            correction = self.SELF_WORK_LINE
+            yield correction
+            answer += " " + correction
+        elif answer and (self._false_progress(answer)
+                         or self._action_claim(answer)):
             # the bluff is already out of his mouth here — so do the thing
             # for real and say what actually happened, out loud
             rescued = self._rescue_action(text)
