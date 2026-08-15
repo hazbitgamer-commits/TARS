@@ -269,8 +269,13 @@ def _lift(frame):
     return cv2.cvtColor(cv2.merge((lightness, a, b)), cv2.COLOR_LAB2BGR)
 
 
-def _faces_in(frame, lift: bool = False) -> list[dict]:
-    """[{embedding, box(x,y,w,h)}] for every real face in the frame."""
+def _faces_in(frame, lift: bool = False, why: dict = None) -> list[dict]:
+    """[{embedding, box(x,y,w,h)}] for every real face in the frame.
+
+    Pass a dict as `why` to find out what happened when the answer is empty
+    — whether the detector fell over, found nothing, or found something
+    that got rejected for being the wrong size.
+    """
     from deepface import DeepFace
 
     if lift:
@@ -282,8 +287,13 @@ def _faces_in(frame, lift: bool = False) -> list[dict]:
         reps = DeepFace.represent(frame, model_name=MODEL,
                                   detector_backend=DETECTOR,
                                   enforce_detection=False)
-    except Exception:
+    except Exception as bad:
+        if why is not None:
+            why["error"] = f"{type(bad).__name__}: {bad}"
         return []
+    if why is not None:
+        why["detector_returned"] = len(reps)
+        why["rejected"] = []
     out = []
     for r in reps:
         area = r.get("facial_area") or {}
@@ -291,6 +301,10 @@ def _faces_in(frame, lift: bool = False) -> list[dict]:
         # enforce_detection=False returns the whole frame as one "face" when
         # nothing was found — filter that and background specks out
         if w < MIN_FACE or h < MIN_FACE or w > frame.shape[1] * 0.9:
+            if why is not None:
+                why["rejected"].append(
+                    f"{w}x{h} " + ("too small" if w < MIN_FACE or h < MIN_FACE
+                                   else "too wide (whole frame)"))
             continue
         vec = np.array(r["embedding"], dtype=np.float32)
         vec /= (np.linalg.norm(vec) + 1e-9)
@@ -577,7 +591,8 @@ def identify(frame=None, wait: bool = True, learn: bool = True) -> list[dict]:
     _mirror_migrate(db)
 
     # The ordinary picture first.
-    people = [[f, _match(f["embedding"], db)] for f in _faces_in(frame)]
+    why = {}
+    people = [[f, _match(f["embedding"], db)] for f in _faces_in(frame, why=why)]
 
     # Anyone it couldn't put a name to gets a second attempt on a lifted
     # picture. Measured, not assumed: lifting a face that was already lit
@@ -601,8 +616,20 @@ def identify(frame=None, wait: bool = True, learn: bool = True) -> list[dict]:
         _save_db(db)
     ready = True
 
+    if not out:
+        # Keep the frame that failed. Describing a picture in numbers only
+        # goes so far — being able to run the detector against the exact
+        # image it gave up on settles in seconds what guessing does not.
+        try:
+            import cv2
+
+            cv2.imwrite(str(BASE / "workshop" / "no_face.jpg"), frame)
+        except Exception:
+            pass
+
     _note_look(
         outcome="looked" if out else "no face found in the frame",
+        detector=why,
         picture=f"{frame.shape[1]}x{frame.shape[0]}",
         brightness=round(brightness(frame), 1),
         known_people={n: len(i.get("embeddings", [])) for n, i in db.items()},
