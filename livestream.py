@@ -775,6 +775,28 @@ def _to_screen(ix: float, iy: float) -> tuple[int, int] | None:
     return None
 
 
+LAST_INPUT = BASE / "livestream_last_input.json"
+
+
+def _note_input(action: dict, outcome: str, **extra) -> None:
+    """Write down what the phone asked for and what happened to it.
+
+    Remote control failing looks identical from a phone whatever the cause —
+    the tap just does nothing. Guessing at that cost a whole afternoon on the
+    face recogniser earlier today, so this time the answer gets written down
+    the first time it goes wrong.
+    """
+    try:
+        import json as _json
+
+        LAST_INPUT.write_text(_json.dumps({
+            "at": time.strftime("%H:%M:%S"),
+            "asked": {k: v for k, v in (action or {}).items() if k != "code"},
+            "outcome": outcome, **extra}, indent=1), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def _do_input(action: dict) -> dict:
     """Carry out one remote action. Everything here is guarded twice: the
     code was already checked by the caller, and control has to have been
@@ -814,6 +836,8 @@ def _do_input(action: dict) -> dict:
         return {"ok": True, "source": wanted}
 
     if not _live.get("control"):
+        _note_input(action, "control is off",
+                    source=_live.get("source"), live=live())
         return {"ok": False, "why": "control is off"}
 
     import pyautogui
@@ -825,7 +849,9 @@ def _do_input(action: dict) -> dict:
         point = _to_screen(float(action.get("x", -1)),
                            float(action.get("y", -1)))
         if point is None:
+            _note_input(action, "the tap landed outside the shared screen")
             return {"ok": False, "why": "off screen"}
+        _note_input(action, "done", at=list(point))
         pyautogui.moveTo(point[0], point[1])
         if kind == "click":
             pyautogui.click()

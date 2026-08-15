@@ -17,6 +17,7 @@ except ImportError:
 import datetime
 import json
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -118,6 +119,74 @@ class AutoGain:
             self.gain = float(np.clip(0.9 * self.gain + 0.1 * desired, 1.0, self.limit))
         boosted = np.clip(f * self.gain, -1.0, 1.0)
         return (boosted * 32767).astype(np.int16)
+
+
+# --- the deaf-TARS watchdog -------------------------------------------
+#
+# The conversation loop switches the microphone OFF before TARS speaks, and
+# only switches it back on once the reply has finished. That's correct — it
+# stops TARS hearing itself — but it means anything that blocks mid-reply
+# leaves the microphone off with nobody left to turn it back on.
+#
+# It happened for real: "clip that" uploaded a 29MB video to Telegram on the
+# conversation thread. For the length of that upload TARS was running, the
+# dashboard answered normally, and it could not hear a thing. From the
+# outside it looked like TARS had died, and it never came back on its own.
+#
+# That particular upload now runs on its own thread, but the trap isn't
+# specific to clipping — ANY slow skill can do it. So rather than trusting
+# every skill to behave, this watches from outside: if TARS hasn't been
+# listening for a few minutes, something has it stuck, and it restarts
+# itself rather than sitting there deaf.
+STUCK_AFTER = 180        # seconds not listening before TARS is presumed stuck
+_alive = {"state": "listening", "since": time.time(), "recovered": 0.0}
+
+
+def note_state(state: str) -> None:
+    """Every state change lands here, so the watchdog knows how long TARS
+    has been out of the listening state."""
+    if state != _alive["state"]:
+        _alive["state"] = state
+        _alive["since"] = time.time()
+
+
+def _watchdog() -> None:
+    while True:
+        time.sleep(10)
+        try:
+            stuck = (_alive["state"] != "listening"
+                     and time.time() - _alive["since"] > STUCK_AFTER)
+            # once per ten minutes at most: a restart that fails shouldn't
+            # turn into a machine that restarts itself forever
+            if not stuck or time.time() - _alive["recovered"] < 600:
+                continue
+            _alive["recovered"] = time.time()
+            stuck_for = int(time.time() - _alive["since"])
+            log("said", f"(watchdog: stuck in '{_alive['state']}' for "
+                        f"{stuck_for}s — restarting)")
+            print(f"[watchdog] stuck in '{_alive['state']}' for {stuck_for}s "
+                  f"— restarting the engine", flush=True)
+            try:
+                import tars_phone
+
+                tars_phone.send(
+                    "Something jammed me up and I'd gone deaf — restarting "
+                    "myself now. Give me a few seconds.", force=True)
+            except Exception:
+                pass
+            import os
+            import subprocess
+
+            helper = BASE / "skills" / "restart_engine" / "_do_restart.py"
+            if helper.exists():
+                subprocess.Popen(
+                    [sys.executable, str(helper), str(os.getpid()), str(BASE)],
+                    cwd=str(BASE), close_fds=True,
+                    creationflags=(subprocess.DETACHED_PROCESS
+                                   | subprocess.CREATE_NO_WINDOW)
+                    if sys.platform == "win32" else 0)
+        except Exception:
+            pass          # a broken watchdog must never take TARS down with it
 
 
 def _mid_game() -> bool:
@@ -287,6 +356,9 @@ def main() -> None:
     def set_state(s: str) -> None:
         ui.set(s)
         dashboard.set_status(s)
+        note_state(s)      # the watchdog's only view of whether TARS is stuck
+
+    threading.Thread(target=_watchdog, daemon=True).start()
     speaker = Speaker()
     transcriber = Transcriber()
     global TRANSCRIBER
