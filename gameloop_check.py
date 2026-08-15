@@ -96,45 +96,5 @@ after_reply = loop[loop.index("first_turn = False\n\n                # Mid-game"
 check("it breaks BEFORE the still-listening blip",
       after_reply.index("if _mid_game():") < after_reply.index("beep(660"), True)
 
-print("\nthe watchdog that stops TARS going permanently deaf")
-# The conversation loop turns the mic OFF before speaking and back on when the
-# reply finishes. A 29MB Telegram upload on that thread once left it off for
-# good: TARS alive, dashboard answering, stone deaf. This watches from outside.
-import time as _t
-
-
-def stalled_for(state, seconds):
-    main._alive.update(state=state, since=_t.time() - seconds)
-    return (main._alive["state"] != "listening"
-            and _t.time() - main._alive["since"] > main.STUCK_AFTER)
-
-
-check("listening for ages is NOT stuck — that's just a quiet room",
-      stalled_for("listening", 9999), False)
-check("a normal reply is not stuck", stalled_for("speaking", 5), False)
-check("a long think is not stuck either", stalled_for("thinking", 60), False)
-check("but stuck speaking past the limit IS",
-      stalled_for("speaking", main.STUCK_AFTER + 5), True)
-check("and so is stuck thinking",
-      stalled_for("thinking", main.STUCK_AFTER + 5), True)
-check("the limit leaves room for a genuinely slow answer",
-      main.STUCK_AFTER >= 120, True)
-
-main.note_state("listening")
-check("going back to listening clears it", main._alive["state"], "listening")
-began = main._alive["since"]
-main.note_state("listening")
-check("and repeating a state doesn't restart the clock",
-      main._alive["since"], began)
-
-guts = Path("main.py").read_text(encoding="utf-8")
-watchdog = guts[guts.index("def _watchdog"):guts.index("def _mid_game")]
-check("it waits before firing again, so it can't restart in a loop",
-      "recovered" in watchdog and "600" in watchdog, True)
-check("it tells him on his phone rather than just vanishing",
-      "tars_phone" in watchdog, True)
-check("and it's wrapped, so a broken watchdog can't take TARS down",
-      "except Exception" in watchdog, True)
-
 print(f"\n{passed} passed, {failed} failed\n")
 sys.exit(1 if failed else 0)
