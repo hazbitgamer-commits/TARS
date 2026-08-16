@@ -3272,6 +3272,7 @@ class Brain:
             answer = (f"I don't actually know anything about {ungrounded} — "
                       f"I've no record of it, and I'd rather say so than make "
                       f"something up. Did I mishear you?")
+        answer = self._offer_big_brain(text, answer)
         self.last_turn = {"said": text, "skill": "chat", "args": {},
                           "at": time.time(), "reply": answer[:200]}
         self.history += [
@@ -3519,6 +3520,27 @@ class Brain:
         if answer:
             self.history += [{"role": "user", "content": text},
                              {"role": "assistant", "content": answer}]
+
+    BIG_BRAIN_OFFER = (" That's a big one, and I've answered it off my local "
+                       "brain — say \"big brain\" if you want me to properly "
+                       "dig into it.")
+
+    def _offer_big_brain(self, text: str, answer: str) -> str:
+        """A local model always answers, which is the trouble: on something
+        genuinely hard the answer is mediocre in a way that doesn't look
+        mediocre. Say so once, rather than passing it off as the best
+        available — the big brain runs on his own Claude subscription and is
+        one sentence away."""
+        try:
+            import model_router
+
+            if (answer and len(answer) > 40
+                    and model_router.deserves_big_brain(text)
+                    and "big brain" not in (answer or "").lower()):
+                return answer + self.BIG_BRAIN_OFFER
+        except Exception:
+            pass
+        return answer
 
     def _model_for(self, text: str) -> str:
         """Which local brain should answer this one.

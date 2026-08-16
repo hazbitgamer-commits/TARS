@@ -49,6 +49,21 @@ DEEP = ["qwen3:14b", "qwen2.5:14b", "qwen3.6:35b"]
 # still stays put — "calculate 2+2" is a maths question and not a hard one.
 TRIVIAL_BELOW = 0.20
 HARD_ABOVE = 0.45
+# Above this, no local model on this machine is really the right tool. A 7B
+# or a 14B running on a home PC will answer — that's the problem, it always
+# answers — and the answer to something genuinely hard will be mediocre in a
+# way that isn't obvious. The honest move is to say so and offer the big
+# brain, which runs on his existing Claude subscription, rather than quietly
+# handing over a weak answer as though it were the best available.
+VERY_HARD = 0.55
+
+
+def deserves_big_brain(text: str) -> bool:
+    """Is this beyond what a local model should be trusted with?"""
+    hard, signals = score(text)
+    # a long question with real reasoning in it, not just a long ramble
+    return hard >= VERY_HARD and (signals["reasoning"] or signals["code"]
+                                  or signals["math"])
 
 _CODE_RX = re.compile(
     r"\b(?:def |class |import |function|await |const |var |=>|\{\}|\[\]|"

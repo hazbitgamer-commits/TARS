@@ -203,6 +203,34 @@ finally:
     mr.STATS = real_stats
     mr._stats = {}
 
+print("\nknowing when a local model isn't the right tool at all")
+# A local model always answers. That's the trouble — on something genuinely
+# hard the answer is mediocre in a way that doesn't LOOK mediocre. Better to
+# say so and offer the big brain than pass it off as the best available.
+for text, offer in [
+    ("what time is it", False),
+    ("hows your day", False),
+    ("why is the sky blue", False),
+    ("set a timer for ten minutes", False),
+    ("tell me a joke", False),
+    ("explain step by step how i should plan my science assignment and why "
+     "that order works best", True),
+    ("fix this python function, it throws a traceback, and explain why", True),
+]:
+    check(f'{"offers" if offer else "doesn\'t"}: "{text[:44]}"',
+          mr.deserves_big_brain(text), offer)
+
+check("a long ramble with no real question in it doesn't trigger it",
+      mr.deserves_big_brain("so anyway i was walking to school and then the "
+                            "bus was late and my mate said the thing about "
+                            "the game and it was all a bit much really"), False)
+
+guts = Path("brain.py").read_text(encoding="utf-8")
+check("the offer is only ever added to an answer that exists",
+      "len(answer) > 40" in guts, True)
+check("and it never doubles up on itself",
+      'not in (answer or "").lower()' in guts, True)
+
 print("\nhe can actually ask about it")
 for said in ["which brain are you using", "how are your brains",
              "what model are you on", "brain stats"]:
