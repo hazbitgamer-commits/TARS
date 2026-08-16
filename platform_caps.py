@@ -44,7 +44,13 @@ def blocked_skills() -> set:
     return BLOCKED_OFF_WINDOWS if LITE else set()
 
 
-CHAT_MODEL = "qwen2.5:7b"
+# Raised from qwen2.5:7b at his request: he has 34GB of RAM and a 14B model
+# already installed, and wanted the better answers. The cost is real and
+# worth stating — measured warm on his PC, 7B answers in about 0.4s and this
+# one in about 2.2s. The per-question router is what makes that bearable:
+# "what time is it" still goes to the 3B, so the slow model is only paying
+# its way on questions that actually need it.
+CHAT_MODEL = "qwen3:14b"
 
 
 def total_ram_gb() -> float:

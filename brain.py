@@ -250,16 +250,66 @@ def wants_control(lowered: str) -> bool:
     return bool(_STREAM_CONTROL.search(lowered))
 
 
+# His complaint, in his words: "i dont like it how if he hears a key word he
+# refuses to adapt to the sentence."
+#
+# He's right, and there's a real example in the logs. He said "I'm not
+# watching Taskmaster!" and TARS answered "Understood. Let's proceed with
+# shutting down the PC." It heard words it recognised and stopped reading.
+#
+# Every hard gate in this file matches a phrase and fires. That's what makes
+# them reliable — a gate that thinks is a gate that can be talked out of
+# doing what it was told. But matching a phrase is not the same as being
+# TOLD the phrase, and there are three ways a sentence can contain the words
+# without meaning them:
+#
+#   telling it NOT to      "don't clip that", "no need to watch for me"
+#   talking ABOUT it       "what does clip that do", "you said stop watching"
+#   somebody else's words  "he told me to stop watching"
+#
+# So the gates still match on words — but a sentence that plainly isn't a
+# command doesn't count as one.
+_NOT_MEANT = re.compile(
+    r"\b(?:don'?t|do not|dont|didn'?t|won'?t|shouldn'?t|never|no need to|"
+    r"instead of|rather than|without|isn'?t|aren'?t|wasn'?t|stop saying|"
+    r"quit saying|not)\s+(?:\w+\s+){0,3}$")
+_TALKING_ABOUT = re.compile(
+    r"\b(?:what does|what'?s|whats|how does|why does|does it|can it|"
+    r"you said|i said|he said|she said|they said|told me to|meant by|"
+    r"what happens (?:if|when))\b")
+
+
+def means_it(lowered: str, at: int = 0) -> bool:
+    """Is he actually ASKING for this, or just saying the words?
+
+    `at` is where the trigger phrase starts, so only the run-up to it is
+    examined — "stop watching" is a command, and "I'm not watching" is not,
+    and the difference is entirely in the few words before.
+    """
+    text = lowered or ""
+    if _TALKING_ABOUT.search(text):
+        return False
+    return not _NOT_MEANT.search(text[:at] if at else text)
+
+
+def _fires(pattern, lowered: str):
+    """The match, but only when he means it."""
+    found = pattern.search(lowered or "")
+    if found and means_it(lowered, found.start()):
+        return found
+    return None
+
+
 def wants_stream(lowered: str) -> tuple[str, str]:
     """(action, source) — action is '' when this isn't about the stream."""
     rate = _STREAM_FPS.search(lowered)
     if rate:
         return "fps:" + rate.group(1), ""
-    if _STREAM_OFF.search(lowered):
+    if _fires(_STREAM_OFF, lowered):
         return "stop", ""
     if _STREAM_STATUS.search(lowered):
         return "status", ""
-    if _STREAM_ON.search(lowered):
+    if _fires(_STREAM_ON, lowered):
         if re.search(r"\bleft\b", lowered):
             return "start", "screen:left"
         if re.search(r"\bright\b", lowered):
@@ -305,11 +355,11 @@ _PRESENCE_STATUS = re.compile(
 
 def wants_presence(lowered: str) -> str:
     """'on', 'off', 'status', or '' when this isn't about it."""
-    if _PRESENCE_OFF.search(lowered):
+    if _fires(_PRESENCE_OFF, lowered):
         return "off"
-    if _PRESENCE_STATUS.search(lowered):
+    if _fires(_PRESENCE_STATUS, lowered):
         return "status"
-    if _PRESENCE_ON.search(lowered):
+    if _fires(_PRESENCE_ON, lowered):
         return "on"
     return ""
 
@@ -334,13 +384,13 @@ _CLIP_SECS = re.compile(r"\blast (\d+)\s*seconds?\b")
 
 def wants_clip(lowered: str) -> tuple[str, int]:
     """(action, seconds) — action is '' when this isn't about clipping."""
-    if _CLIP_OFF.search(lowered):
+    if _fires(_CLIP_OFF, lowered):
         return "off", 0
-    if _CLIP_ON.search(lowered):
+    if _fires(_CLIP_ON, lowered):
         return "on", 0
-    if _CLIP_STATUS.search(lowered):
+    if _fires(_CLIP_STATUS, lowered):
         return "status", 0
-    if _CLIP_NOW.search(lowered):
+    if _fires(_CLIP_NOW, lowered):
         found = _CLIP_SECS.search(lowered)
         return "clip", int(found.group(1)) if found else 0
     return "", 0
@@ -378,33 +428,33 @@ _MINUTES = re.compile(r"\b(\d+)\s*(minutes?|mins?|hours?)\b")
 
 def wants_rewind(lowered: str) -> tuple[str, int]:
     """(action, minutes). action is '' when this isn't about Rewind at all."""
-    if _REWIND_OFF.search(lowered):
+    if _fires(_REWIND_OFF, lowered):
         return "off", 0
-    if _REWIND_ON.search(lowered):
+    if _fires(_REWIND_ON, lowered):
         return "on", 0
-    if _REWIND_PAUSE.search(lowered):
+    if _fires(_REWIND_PAUSE, lowered):
         found = _MINUTES.search(lowered)
         return "pause", int(found.group(1)) if found else 30
-    if _REWIND_FORGET.search(lowered):
+    if _fires(_REWIND_FORGET, lowered):
         found = _MINUTES.search(lowered)
         count = int(found.group(1)) if found else 15
         if found and found.group(2).startswith("hour"):
             count *= 60
         return "forget", count
-    if _REWIND_STATUS.search(lowered):
+    if _fires(_REWIND_STATUS, lowered):
         return "status", 0
-    if _REWIND_ASK.search(lowered):
+    if _fires(_REWIND_ASK, lowered):
         return "search", 0
     return "", 0
 
 
 def wants_guard(lowered: str) -> str:
     """'on', 'off', 'status', or '' for none of the above."""
-    if _GUARD_OFF.search(lowered):
+    if _fires(_GUARD_OFF, lowered):
         return "off"
-    if _GUARD_STATUS.search(lowered):
+    if _fires(_GUARD_STATUS, lowered):
         return "status"
-    if _GUARD_ON.search(lowered):
+    if _fires(_GUARD_ON, lowered):
         return "on"
     return ""
 
@@ -2447,8 +2497,56 @@ class Brain:
             out.append({"skill": s["skill"], "description": d, "args": args})
         return out
 
+    # Words that appear in half the skills and tell you nothing about which
+    # one he means.
+    _NOISE = frozenset("""a an and the to of for on in it is are was with by or
+        not but if then that this these those his her its your you owner tars
+        e.g eg use used using open opens something anything thing things when
+        what which who how why do does did can could would should from at as
+        into about over under out up down off""".split())
+
+    @staticmethod
+    def _shortlist(text: str, catalog: list[dict], keep: int = 24) -> list[dict]:
+        """The skills worth showing the router for THIS command.
+
+        The catalogue is 121 skills and about twelve thousand tokens, and all
+        of it was being sent every single time he said anything. The diet
+        above was written when 85 skills made nine thousand tokens and cold
+        routes took 8.6 seconds; it has grown a third past that since.
+
+        Most of it is noise for any given command. "What's the weather" has
+        nothing to do with the robot vacuum's fan speed, and including it
+        costs both time and accuracy — a router with a hundred near-misses in
+        front of it picks wrong more often than one with twenty.
+
+        Scored on plain word overlap, no model and no embedding, because this
+        runs BEFORE the routing model and must never be the slow part. When
+        nothing matches at all — a command phrased in words no skill uses —
+        it hands back everything rather than guess, so the worst case is
+        exactly what happened before.
+        """
+        words = {w for w in re.findall(r"[a-z]+", (text or "").lower())
+                 if len(w) > 2 and w not in Brain._NOISE}
+        if not words:
+            return catalog
+        scored = []
+        for s in catalog:
+            name = s["skill"].lower()
+            haystack = (name + " " + s.get("description", "").lower())
+            hits = sum(1 for w in words if w in haystack)
+            # the skill's own name being said is worth far more than a word
+            # buried in its prose
+            hits += 3 * sum(1 for w in words if w in name)
+            if hits:
+                scored.append((hits, s))
+        if not scored:
+            return catalog
+        scored.sort(key=lambda pair: -pair[0])
+        return [s for _, s in scored[:keep]]
+
     def _route(self, text: str, must_act: bool = False) -> dict:
-        catalog = self._compact_catalog(self.skills.catalog())
+        catalog = self._shortlist(text, self._compact_catalog(
+            self.skills.catalog()))
         if not catalog:
             return {"skill": "chat"}
         system = (

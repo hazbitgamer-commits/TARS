@@ -238,5 +238,41 @@ for said in ["which brain are you using", "how are your brains",
 for said in ["how are you", "whats the weather", "which one is better"]:
     check(f'not the report: "{said}"', wants_brain_report(said), False)
 
+print("\nhearing a word isn't the same as being told it")
+# His words: "i dont like it how if he hears a key word he refuses to adapt
+# to the sentence." From the logs: he said "I'm not watching Taskmaster!" and
+# TARS replied "Understood. Let's proceed with shutting down the PC."
+from brain import (means_it, wants_clip, wants_guard, wants_presence,
+                   wants_rewind)
+
+
+def anything(said):
+    return (wants_clip(said)[0] or wants_rewind(said)[0]
+            or wants_presence(said) or wants_guard(said) or "")
+
+
+print("  commands still work:")
+for said, want in [("clip that", "clip"), ("watch for me", "on"),
+                   ("stop watching for me", "off"), ("guard my room", "on"),
+                   ("stop rewind", "off"),
+                   ("forget the last 20 minutes", "forget")]:
+    check(f'    "{said}"', anything(said), want)
+
+print("  but saying the words isn't asking:")
+for said in ["i'm not watching taskmaster",
+             "don't clip that",
+             "no need to watch for me",
+             "what does clip that do",
+             "you said stop watching",
+             "he told me to stop watching",
+             "i didn't say guard my room",
+             "never clip that again",
+             "instead of guarding my room just tell me"]:
+    check(f'    "{said}"', anything(said), "")
+
+check("a plain command means it", means_it("clip that"), True)
+check("a negated one doesn't", means_it("dont clip that", 5), False)
+check("and asking about it doesn't", means_it("what does clip that do"), False)
+
 print(f"\n{passed} passed, {failed} failed\n")
 sys.exit(1 if failed else 0)
