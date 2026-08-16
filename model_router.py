@@ -36,7 +36,23 @@ import time
 # so a machine without the coder model still routes sensibly.
 FAST = ["qwen2.5:3b", "qwen2.5:1.5b", "llama3.2:3b"]
 CODE = ["qwen2.5-coder:14b", "qwen2.5-coder:7b", "deepseek-coder:6.7b"]
-DEEP = ["qwen3:14b", "qwen2.5:14b", "qwen3.6:35b"]
+
+# Deliberately NOT qwen3, and this is the interesting bit. qwen3 is a
+# REASONING model: left to itself it spends its whole word budget thinking
+# and returns an empty answer — measured at 791 characters of thinking and
+# 0 of reply, which is exactly what "he just ghosted me" looks like. The fix
+# is to disable the thinking, and then you are paying for a big slow model
+# with the one thing that makes it good switched off:
+#
+#     qwen3:14b, thinking off   18.6s   767 characters
+#     qwen2.5:7b                 4.3s   840 characters
+#
+# Four times slower, no better. So on THIS machine there is no local model
+# worth escalating to — the 7B is the sweet spot, and anything genuinely
+# beyond it should go to the big brain rather than to a bigger local model
+# pretending. The list stays for machines that have a plain (non-thinking)
+# larger model installed.
+DEEP = ["qwen2.5:14b", "qwen2.5:32b", "llama3.1:70b"]
 
 # A question has to be clearly trivial to drop to the small model, and
 # clearly hard to justify loading a big one. Everything in between stays on
@@ -235,16 +251,23 @@ def resident() -> list:
 
 
 def _first_available(wanted: list) -> str:
+    """The first model on the list that is actually installed. Exact names
+    only.
+
+    There used to be a "same family, any tag" fallback here, and it was
+    quietly wrong: asked for qwen2.5:14b, which isn't installed, it happily
+    returned qwen2.5:7b-router — the separate instance the ROUTER uses to
+    decide which skill to run. Answering questions on that competes with the
+    routing itself for the same prompt cache, and it isn't a bigger model at
+    all, which was the entire reason for asking.
+
+    A missing model should mean "don't switch", not "switch to something
+    that shares a name".
+    """
     have = installed()
     for name in wanted:
-        for got in have:
-            if got == name or got.startswith(name.split(":")[0] + ":") and got == name:
-                return got
-    for name in wanted:                        # looser: same family, any tag
-        stem = name.split(":")[0]
-        for got in have:
-            if got.split(":")[0] == stem:
-                return got
+        if name in have:
+            return name
     return ""
 
 

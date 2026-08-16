@@ -76,9 +76,23 @@ check("a trivial question drops to the small one",
 check("a coding question gets the coder",
       mr.pick("theres a bug in my python function", DEFAULT)[0],
       "qwen2.5-coder:14b")
-check("a hard one gets the bigger brain",
+check("a hard one gets the bigger brain WHERE ONE EXISTS",
+      mr.pick("explain step by step why the sky is blue",
+              DEFAULT)[0], DEFAULT)     # his machine: only qwen3, so no
+# qwen3 is a reasoning model. Left alone it returns 791 characters of
+# thinking and an empty answer — "he just ghosted me". Turn the thinking off
+# to get words out of it and it's four times slower than the 7B for an answer
+# that isn't better. So it is deliberately not an escalation target.
+check("a thinking model is never picked, however big it is",
+      "qwen3:14b" in mr.DEEP, False)
+pretend(HIS_MACHINE + ["qwen2.5:14b"], ["qwen2.5:3b", DEFAULT])
+check("but a plain bigger model IS used when installed",
       mr.pick("explain step by step why the sky is blue", DEFAULT)[0],
-      "qwen3:14b")
+      "qwen2.5:14b")
+pretend(HIS_MACHINE, ["qwen2.5:3b", DEFAULT])
+
+check("a model that isn't installed is never substituted for a lookalike",
+      mr._first_available(["qwen2.5:14b"]), "")
 check("everything in between stays put",
       mr.pick("what should i do about dinner tonight", DEFAULT)[0], DEFAULT)
 

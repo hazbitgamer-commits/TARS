@@ -3669,8 +3669,14 @@ class Brain:
         began = time.time()
         r = requests.post(
             OLLAMA_URL,
+            # think=False matters as much as the model name. qwen3 is a
+            # REASONING model: left alone it spends the whole word budget
+            # thinking to itself and hands back an empty answer — 791
+            # characters of thinking, 0 of reply. The streaming path already
+            # set this; this one didn't, so anything routed here to a qwen3
+            # simply said nothing at all.
             json={"model": chosen, "messages": messages,
-                  "stream": False,
+                  "stream": False, "think": False,
                   "keep_alive": KEEP_ALIVE,
                   "options": {"num_predict": 160}},  # spoken replies are short
             timeout=120,

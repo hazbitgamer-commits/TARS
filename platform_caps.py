@@ -44,13 +44,16 @@ def blocked_skills() -> set:
     return BLOCKED_OFF_WINDOWS if LITE else set()
 
 
-# Raised from qwen2.5:7b at his request: he has 34GB of RAM and a 14B model
-# already installed, and wanted the better answers. The cost is real and
-# worth stating — measured warm on his PC, 7B answers in about 0.4s and this
-# one in about 2.2s. The per-question router is what makes that bearable:
-# "what time is it" still goes to the 3B, so the slow model is only paying
-# its way on questions that actually need it.
-CHAT_MODEL = "qwen3:14b"
+# Raised to qwen3:14b when he asked for a bigger model, then put back after
+# measuring it on the question he actually asked. Same question, same PC:
+#
+#     qwen3:14b    10.0s, 747 characters
+#     qwen2.5:7b    4.3s, 840 characters
+#
+# Two and a half times slower for an answer that wasn't better. The bigger
+# model is still there and the router still escalates genuinely hard
+# questions to it — it just isn't what answers "how was your day".
+CHAT_MODEL = "qwen2.5:7b"
 
 
 def total_ram_gb() -> float:
