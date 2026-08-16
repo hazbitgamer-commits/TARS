@@ -88,6 +88,33 @@ allowed("noticing its own limits",
 allowed("a normal greeting", "Morning. How did you sleep?")
 allowed("running smoothly", "I'm running smoothly, nothing to report.")
 
+print("\nthe ONE time 'I'm teaching myself' is true")
+# I wrote this whole gate believing TARS couldn't write its own skills. It
+# can: the learning flow really does write a new skill file using the big
+# brain. This gate flagged that honest reply as a lie, and only escaped
+# because that flow returns before the correction runs — a code path, not a
+# guarantee. TARS announcing it was teaching itself and then correcting
+# itself for saying so would be worse than the bluff it was built to catch.
+allowed("the genuine learning reply", Brain.LEARN_RESPONSES)
+caught("but the invented version is still caught",
+       "On it - learning new voice commands for camera adjustments and "
+       "boosting my sense of humor right away.")
+
+print("\nreading the ability back, not his sentence")
+from brain import _as_ability
+
+for said, want in [
+    ("Teach yourself how to draw and design diagrams that look clean.",
+     "draw and design diagrams that look clean"),
+    ("can you learn to read my handwriting", "read my handwriting"),
+    ("work out how to open my curtains", "open my curtains"),
+    ("draw diagrams", "draw diagrams"),
+]:
+    ok = _as_ability(said) == want
+    passed, failed = (passed + 1, failed) if ok else (passed, failed + 1)
+    print(f"  {'ok  ' if ok else 'FAIL'} \"{said[:44]}\""
+          + ("" if ok else f"\n         got {_as_ability(said)!r}"))
+
 print("\nthe correction it gives instead")
 line = Brain.SELF_WORK_LINE
 check_ok = ("can't change how I work" in line

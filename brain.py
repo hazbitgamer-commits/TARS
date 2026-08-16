@@ -300,6 +300,26 @@ def _fires(pattern, lowered: str):
     return None
 
 
+_ASK_PREFIX = re.compile(
+    r"^(?:can (?:you|u) |could (?:you|u) |please |go (?:on )?and )?"
+    r"(?:teach (?:yourself|urself)|learn|work out|figure out)"
+    r"\s+(?:how\s+)?(?:to\s+)?", re.I)
+
+
+def _as_ability(said: str) -> str:
+    """His request, turned into the thing he wants TARS to be able to do.
+
+    "Teach yourself how to draw diagrams" is an instruction; the ability is
+    "draw diagrams". Reading the instruction back inside the offer produced
+    "want me to teach myself to Teach yourself how to draw diagrams", which
+    reads like it didn't understand a word he said.
+    """
+    cleaned = _ASK_PREFIX.sub("", (said or "").strip()).strip().rstrip(".!")
+    if not cleaned:
+        return (said or "").strip()
+    return cleaned[0].lower() + cleaned[1:] if cleaned[:1].isupper() else cleaned
+
+
 def wants_stream(lowered: str) -> tuple[str, str]:
     """(action, source) — action is '' when this isn't about the stream."""
     rate = _STREAM_FPS.search(lowered)
@@ -647,8 +667,13 @@ class Brain:
             if len(text.strip()) >= 4:
                 clarified = f"{original} — for example: {text.strip()}"
                 self.pending_learn = clarified
-                reply = (f"Got it — want me to teach myself to {clarified}? "
-                         f"Say yes and I'll get to work.")
+                # Read back the ABILITY, not his sentence. He said "teach
+                # yourself how to draw diagrams" and got "want me to teach
+                # myself to Teach yourself how to draw diagrams" — the ask
+                # echoed inside the offer, which reads like it misheard him.
+                reply = (f"Got it — want me to teach myself to "
+                         f"{_as_ability(clarified)}? Say yes and I'll get "
+                         f"to work.")
                 self.history += [{"role": "user", "content": text},
                                  {"role": "assistant", "content": reply}]
                 return reply
@@ -3044,13 +3069,23 @@ class Brain:
         "If you want something added, it needs Claude to write it.")
 
     def _self_upgrade_claim(self, reply: str) -> bool:
-        """Did it just claim to be improving ITSELF? Always false if so.
+        """Did it just claim to be improving ITSELF, when it isn't?
 
-        Chat replies only happen when no skill ran, and no skill can rewrite
-        TARS anyway — so a reply about its own upgrades is invented, every
-        time, with no exceptions worth carving out.
+        There IS one case where "I'm teaching myself right now" is simply
+        true: the learning flow, which really does write a new skill file
+        using the big brain. I originally wrote this gate believing no such
+        thing existed, and it flags that honest reply as a lie.
+
+        It only escaped by luck — the learning flow returns before the chat
+        correction runs. That's a code path, not a guarantee, and if it ever
+        changed TARS would announce it was teaching itself and then correct
+        itself for saying so, in the same breath. So the real reply is
+        exempted by name rather than by accident.
         """
-        return bool(self._SELF_WORK.search(reply or ""))
+        text = reply or ""
+        if self.LEARN_RESPONSES[:40] in text:
+            return False
+        return bool(self._SELF_WORK.search(text))
 
     # skills a rescued guess must never reach — destructive, outward-facing,
     # or expensive. Everything else is fair game: the owner said "I don't care
