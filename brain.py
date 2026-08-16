@@ -3226,12 +3226,12 @@ class Brain:
     def reply(self, text: str) -> str:
         messages = self._chat_messages(text)
         try:
-            answer = self._ask_ollama(messages)
+            answer = self._ask_ollama(messages, text)
         except (requests.ConnectionError, requests.Timeout):
             if not self._wake_ollama():
                 return "My local brain is offline and I couldn't restart it. Open the Ollama app for me."
             try:
-                answer = self._ask_ollama(messages)
+                answer = self._ask_ollama(messages, text)
             except Exception:
                 return "My local brain is still waking up. Give me a moment and ask again."
         except Exception as e:
@@ -3428,8 +3428,8 @@ class Brain:
         try:
             with requests.post(
                 OLLAMA_URL,
-                json={"model": MODEL, "messages": messages, "stream": True,
-                      "think": False,
+                json={"model": self._model_for(text), "messages": messages,
+                      "stream": True, "think": False,
                       "keep_alive": KEEP_ALIVE, "options": {"num_predict": 160}},
                 timeout=120, stream=True,
             ) as r:
@@ -3490,10 +3490,35 @@ class Brain:
             self.history += [{"role": "user", "content": text},
                              {"role": "assistant", "content": answer}]
 
-    def _ask_ollama(self, messages: list[dict]) -> str:
+    def _model_for(self, text: str) -> str:
+        """Which local brain should answer this one.
+
+        Falls back to the usual model on any doubt at all: a router that
+        gets it wrong occasionally is fine, a router that breaks answering
+        is not.
+        """
+        try:
+            import model_router
+
+            gaming = False
+            try:
+                import game_watch
+
+                gaming = game_watch.playing_now()
+            except Exception:
+                pass
+            chosen, why = model_router.pick(text or "", MODEL, gaming=gaming)
+            if chosen and chosen != MODEL:
+                self._journal(f"(answering on {chosen} — {why})")
+            return chosen or MODEL
+        except Exception:
+            return MODEL
+
+    def _ask_ollama(self, messages: list[dict], text: str = "") -> str:
         r = requests.post(
             OLLAMA_URL,
-            json={"model": MODEL, "messages": messages, "stream": False,
+            json={"model": self._model_for(text), "messages": messages,
+                  "stream": False,
                   "keep_alive": KEEP_ALIVE,
                   "options": {"num_predict": 160}},  # spoken replies are short
             timeout=120,

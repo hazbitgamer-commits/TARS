@@ -48,7 +48,7 @@ NEVER_SHIP = {"profile.json", ".env", "telegram_owner.txt", "seqta_cache.json",
               "school.json", "misfires.json", "study_progress.json",
               # everything that has been on his screen — the single most
               # personal file in the project now that Rewind exists
-              "index.jsonl", "rewind_state.json", "presence_state.json"}
+              "index.jsonl", "rewind_state.json", "livestream_last_input.json", "presence_state.json"}
 
 _last_check = 0.0
 

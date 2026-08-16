@@ -104,5 +104,64 @@ check("it admits it has no footage rather than inventing a clip",
       any(word in answer.lower()
           for word in ("not in one", "haven't got", "isn't enough")), True)
 
+print("\nsending a clip must NEVER block the voice loop")
+# This one cost a working assistant. The conversation loop stops the
+# microphone before it speaks and only restarts it once the reply is
+# finished. A clip skill that uploaded 29MB to Telegram on that same thread
+# left TARS alive, answering the dashboard, and stone deaf for minutes.
+import threading as _threading
+import time as _time
+import types as _types
+
+import numpy as _np
+
+sent = {"thread": None, "done": False}
+
+
+def slow_send(path, caption=""):
+    sent["thread"] = _threading.current_thread().name
+    _time.sleep(3)                      # a slow upload, as it was in real life
+    sent["done"] = True
+    return True
+
+
+fake_phone = _types.SimpleNamespace(send_video=slow_send)
+real_phone = sys.modules.get("tars_phone")
+real_gaming = highlights._gaming
+try:
+    sys.modules["tars_phone"] = fake_phone
+    highlights._gaming = lambda: True
+    import cv2 as _cv2
+
+    blank = _np.zeros((160, 284, 3), dtype=_np.uint8)
+    ok, buf = _cv2.imencode(".jpg", blank)
+    now = _time.time()
+    highlights._frames.clear()
+    for i in range(highlights.FPS * 3):
+        highlights._frames.append((now - 2 + i * 0.05, buf.tobytes()))
+
+    began = _time.time()
+    reply = highlights.save("Clip", send=True, seconds=25)
+    took = _time.time() - began
+    check("save() comes straight back instead of waiting on the upload",
+          took < 2.0, True)
+    check("the upload had not finished when it returned", sent["done"], False)
+    check("and it says the clip is on its way",
+          "sending" in reply.lower() or "too big" in reply.lower(), True)
+    _time.sleep(3.5)
+    check("the upload still happened, just off to the side", sent["done"], True)
+    check("on a background thread, not the caller's",
+          sent["thread"] != _threading.current_thread().name, True)
+finally:
+    highlights._gaming = real_gaming
+    highlights._frames.clear()
+    if real_phone is not None:
+        sys.modules["tars_phone"] = real_phone
+    else:
+        sys.modules.pop("tars_phone", None)
+    for leftover in highlights.CLIPS.glob("*.mp4"):
+        if _time.time() - leftover.stat().st_mtime < 60:
+            leftover.unlink()
+
 print(f"\n{passed} passed, {failed} failed\n")
 sys.exit(1 if failed else 0)
