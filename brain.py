@@ -300,26 +300,6 @@ def _fires(pattern, lowered: str):
     return None
 
 
-_ASK_PREFIX = re.compile(
-    r"^(?:can (?:you|u) |could (?:you|u) |please |go (?:on )?and )?"
-    r"(?:teach (?:yourself|urself)|learn|work out|figure out)"
-    r"\s+(?:how\s+)?(?:to\s+)?", re.I)
-
-
-def _as_ability(said: str) -> str:
-    """His request, turned into the thing he wants TARS to be able to do.
-
-    "Teach yourself how to draw diagrams" is an instruction; the ability is
-    "draw diagrams". Reading the instruction back inside the offer produced
-    "want me to teach myself to Teach yourself how to draw diagrams", which
-    reads like it didn't understand a word he said.
-    """
-    cleaned = _ASK_PREFIX.sub("", (said or "").strip()).strip().rstrip(".!")
-    if not cleaned:
-        return (said or "").strip()
-    return cleaned[0].lower() + cleaned[1:] if cleaned[:1].isupper() else cleaned
-
-
 def wants_stream(lowered: str) -> tuple[str, str]:
     """(action, source) — action is '' when this isn't about the stream."""
     rate = _STREAM_FPS.search(lowered)
@@ -513,8 +493,6 @@ class Brain:
         self.settings_path = base / "settings.json"
         self.history: list[dict] = []
         self.pending_delete: str | None = None
-        self.pending_learn: str | None = None
-        self.pending_clarify: str | None = None  # a vague self-teach ask
         # awaiting one concrete example before proposing to teach it
         self.recent_learns: list[tuple[float, str]] = []  # (t, normalized request)
         self.pending_quiet: tuple[float, str, dict] | None = None  # (t, skill, args)
@@ -653,34 +631,6 @@ class Brain:
                 self._journal(f"{name} (override): {result[:100]}")
                 return result
 
-        # a vague self-teach ask was held for one concrete example — "add a
-        # voice selection unit to your dashboard" or "sell and buy items on
-        # FC26" gave the learning task nothing to aim at, so it guessed and
-        # the owner had to re-teach it; asking for an example up front fixes the
-        # guess before any work starts
-        if self.pending_clarify:
-            original = self.pending_clarify
-            self.pending_clarify = None
-            if lowered.strip().startswith(("no", "nah", "cancel", "never mind",
-                                           "nevermind")):
-                return "Fair enough, skipping it."
-            if len(text.strip()) >= 4:
-                clarified = f"{original} — for example: {text.strip()}"
-                self.pending_learn = clarified
-                # Read back the ABILITY, not his sentence. He said "teach
-                # yourself how to draw diagrams" and got "want me to teach
-                # myself to Teach yourself how to draw diagrams" — the ask
-                # echoed inside the offer, which reads like it misheard him.
-                reply = (f"Got it — want me to teach myself to "
-                         f"{_as_ability(clarified)}? Say yes and I'll get "
-                         f"to work.")
-                self.history += [{"role": "user", "content": text},
-                                 {"role": "assistant", "content": reply}]
-                return reply
-            # too short to be a real example — fall through and handle this
-            # as a fresh command instead
-
-        # a proposed self-teaching is waiting on the owner's yes/no
         # the design skill asked "Design what, exactly?" — the owner's next
         # words ARE the design request (he once described a full iPhone
         # stand and got asked the same question again)
@@ -704,18 +654,6 @@ class Brain:
                 self._journal(f"design: {result[:100]}")
                 return result
             return "Fair enough, no design."
-
-        if self.pending_learn:
-            request = self.pending_learn
-            self.pending_learn = None
-            if lowered.strip().startswith(("yes", "yeah", "yep", "sure", "go ahead", "do it")):
-                self.skills.run("deep_task", {"task": self._learning_task(request)})
-                self.history += [{"role": "user", "content": text},
-                                 {"role": "assistant", "content": self.LEARN_RESPONSES}]
-                return self.LEARN_RESPONSES
-            if lowered.strip().startswith(("no", "nah", "cancel", "don't", "dont")):
-                return "Fair enough, skipping it."
-            # anything else: drop the proposal and handle this as a fresh command
 
         # "open them in my browser" / "open the repos you were talking about".
         # This used to become open_app("browser") — TARS opened a browser and
@@ -1448,26 +1386,33 @@ class Brain:
                     # still awaiting an answer (or right after) shouldn't get
                     # the exact same "I don't have a skill" prompt again —
                     # that just reads as TARS not having heard the first time.
+                    # He asks once, it happens. There used to be three
+                    # steps here — an ask for an example, then a "say yes",
+                    # then the work. His words: "remove the 3 step bloody
+                    # verification system... if i say smt just do it".
+                    #
+                    # The confirmations were guarding against mishearings
+                    # starting expensive learning runs. That guard is worth
+                    # about one wasted run, and being made to say the same
+                    # thing three times is worth more than that.
+                    #
+                    # The one check kept isn't a confirmation: it stops the
+                    # SAME request starting a second run while the first is
+                    # still going. That's duplicate work, not caution.
                     now = time.time()
                     norm_request = req_low.strip(" .!?")
                     self.recent_learns = [(t, r) for t, r in self.recent_learns
                                           if now - t < 1800]
-                    already_asked = any(r == norm_request
+                    already_going = any(r == norm_request
                                         for _, r in self.recent_learns)
                     self.recent_learns.append((now, norm_request))
-                    if already_asked:
-                        self.pending_learn = request
-                        reply = (f"Still on that same one — teach myself to "
-                                 f"{request}? Just say yes.")
+                    if already_going:
+                        reply = ("Already on that one — still working on it. "
+                                 "I'll tell you when it's done.")
                     else:
-                        # a vague ask ("add a voice selection unit to your
-                        # dashboard") gives the learning task nothing concrete
-                        # to build — get one real example first so the guess
-                        # is right and the owner isn't asked to re-teach it
-                        self.pending_clarify = request
-                        reply = (f"I don't have a skill for that. Give me one "
-                                 f"specific example of what you'd say or want "
-                                 f"done, and I'll teach myself to handle it.")
+                        self.skills.run("deep_task",
+                                        {"task": self._learning_task(request)})
+                        reply = self.LEARN_RESPONSES
                     self.history += [{"role": "user", "content": text},
                                      {"role": "assistant", "content": reply}]
                     return reply
@@ -3063,10 +3008,15 @@ class Brain:
         r"build|work)\w*",
         re.I)
 
+    # This used to say "I can't change how I work", which I now know is
+    # wrong — TARS really can write itself a new skill. The bluff isn't the
+    # ability, it's the pretending: saying it's off building something when
+    # nothing was started. So the correction owns that and points at the
+    # thing that actually works.
     SELF_WORK_LINE = (
-        "Correction — I can't change how I work, and nothing is being built "
-        "in the background. I can only suggest changes for you to approve. "
-        "If you want something added, it needs Claude to write it.")
+        "Correction — nothing's actually happening in the background there, "
+        "I just said it was. If you do want that, say \"teach yourself to\" "
+        "and then what you want, and I'll genuinely go and build it.")
 
     def _self_upgrade_claim(self, reply: str) -> bool:
         """Did it just claim to be improving ITSELF, when it isn't?

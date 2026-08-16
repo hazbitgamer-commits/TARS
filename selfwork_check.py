@@ -3,8 +3,11 @@
 Asked to suggest improvements to itself, it said "On it — learning new voice
 commands for camera adjustments and boosting my sense of humour right away.
 Should take a few minutes", and a minute later "I'm just finishing up the
-updates." None of it was true, and none of it could be: it has no way to
-write its own skills or retrain itself.
+updates." None of it was true — nothing had been started.
+
+It CAN write itself a new skill, which I got wrong at first and which this
+file used to assert the opposite of. The bluff was never the ability; it was
+claiming to be off doing something when nothing had begun.
 
 This is a nastier bluff than the usual kind. "Opening Spotify" is exposed the
 instant Spotify doesn't open. Invented self-improvement has nothing to check
@@ -100,28 +103,13 @@ caught("but the invented version is still caught",
        "On it - learning new voice commands for camera adjustments and "
        "boosting my sense of humor right away.")
 
-print("\nreading the ability back, not his sentence")
-from brain import _as_ability
-
-for said, want in [
-    ("Teach yourself how to draw and design diagrams that look clean.",
-     "draw and design diagrams that look clean"),
-    ("can you learn to read my handwriting", "read my handwriting"),
-    ("work out how to open my curtains", "open my curtains"),
-    ("draw diagrams", "draw diagrams"),
-]:
-    ok = _as_ability(said) == want
-    passed, failed = (passed + 1, failed) if ok else (passed, failed + 1)
-    print(f"  {'ok  ' if ok else 'FAIL'} \"{said[:44]}\""
-          + ("" if ok else f"\n         got {_as_ability(said)!r}"))
-
 print("\nthe correction it gives instead")
 line = Brain.SELF_WORK_LINE
-check_ok = ("can't change how I work" in line
-            and "suggest" in line
+check_ok = ("nothing's actually happening" in line
+            and "teach yourself to" in line
             and "background" in line)
 passed, failed = (passed + 1, failed) if check_ok else (passed, failed + 1)
-print(f"  {'ok  ' if check_ok else 'FAIL'} it says plainly that it can't, and what to do instead")
+print(f"  {'ok  ' if check_ok else 'FAIL'} it owns the bluff and points at what really works")
 
 print(f"\n{passed} passed, {failed} failed\n")
 sys.exit(1 if failed else 0)
