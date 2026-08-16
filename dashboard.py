@@ -30,6 +30,38 @@ EARS: tuple[float, float] = (0.0, 0.0)  # (when the listening loop
 LATEST_JPEG: tuple[float, bytes] = (0.0, b"")  # newest live-feed frame, shared
 # with the camera skill so "what do you see" works while the feed is open
 
+# ---- one tab, not fifteen ---------------------------------------------
+#
+# Asking for the camera used to launch a browser window. So did the brain
+# map, and setup, and the dashboard itself — each one a fresh window, none
+# of them aware the others existed. Ask for three things and you have three
+# windows to close.
+#
+# The dashboard was already a single page with switchable panels; nothing
+# could switch them except a click. So the page now asks "what should I be
+# showing?" a couple of times a second, and anything that used to open a
+# window just answers that question instead.
+#
+# `watching` is how anything knows whether a dashboard is even open. If one
+# is, it gets told what to show; if not, a window is opened — which is the
+# old behaviour, kept for exactly the case it was right for.
+VIEW = {"tab": "home", "at": 0.0, "watching": 0.0}
+TABS = {"": "home", "/": "home", "home": "home", "hud": "camera",
+        "camera": "camera", "brain": "brain", "setup": "setup",
+        "designs": "designs", "voice": "voice"}
+
+
+def show(page: str) -> bool:
+    """Put this on the dashboard. True if a tab was there to receive it."""
+    VIEW["tab"] = TABS.get((page or "").strip("/").lower(), "home")
+    VIEW["at"] = time.time()
+    return dashboard_open()
+
+
+def dashboard_open() -> bool:
+    """Has a dashboard tab checked in recently enough to still be there?"""
+    return time.time() - VIEW.get("watching", 0) < 8
+
 # every TTS voice TARS can speak with — mirrors skills/list_voices + voice_settings
 VOICES = [
     {"id": "bm_george", "name": "George", "desc": "British male — default"},
@@ -401,6 +433,14 @@ class Handler(BaseHTTPRequestHandler):
         elif route == "/three.min.js":
             js = (BASE / "dashboard" / "three.min.js").read_bytes()
             self._send(200, js, "application/javascript")
+        elif route == "/api/view":
+            # the open tab asking what it should be showing. Answering also
+            # counts as "a dashboard is open", which is how anything else
+            # knows whether to switch a panel or open a window.
+            VIEW["watching"] = time.time()
+            self._send(200, json.dumps({"tab": VIEW["tab"],
+                                        "at": VIEW["at"]}).encode(),
+                       "application/json")
         elif route == "/api/state":
             self._send(200, json.dumps(_payload()).encode(), "application/json")
         elif route == "/api/map":

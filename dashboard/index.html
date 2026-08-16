@@ -141,6 +141,8 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.25)}
 /* voice picker */
 #voiceGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));
   gap:12px;overflow-y:auto}
+.panel > iframe{width:100%;height:calc(100vh - 150px);border:1px solid
+  var(--panel-edge);border-radius:16px;background:rgba(5,9,16,.55);display:block}
 .voiceCard{background:var(--panel);border:1px solid var(--panel-edge);border-radius:14px;
   padding:16px;cursor:pointer;transition:.2s;text-align:left}
 .voiceCard:hover{border-color:rgba(70,212,255,.4);transform:translateY(-2px)}
@@ -183,6 +185,9 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.25)}
   <button class="tabBtn active" data-tab="home">Dashboard</button>
   <button class="tabBtn" data-tab="voice">Voice</button>
   <button class="tabBtn" data-tab="designs">Designs</button>
+  <button class="tabBtn" data-tab="camera">Camera</button>
+  <button class="tabBtn" data-tab="brain">Brain</button>
+  <button class="tabBtn" data-tab="setup">Setup</button>
   <a href="/setup" class="tabBtn" style="text-decoration:none;display:inline-block"
      title="Your details, school login, and saved website logins">Setup</a>
 </div>
@@ -257,6 +262,18 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.25)}
     <div id="designGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));
          gap:14px;overflow-y:auto;padding-right:6px"></div>
   </div>
+</div>
+
+<div id="panel-camera" class="panel">
+  <iframe id="frame-camera" data-src="/hud" title="Camera"></iframe>
+</div>
+
+<div id="panel-brain" class="panel">
+  <iframe id="frame-brain" data-src="/brain" title="Brain"></iframe>
+</div>
+
+<div id="panel-setup" class="panel">
+  <iframe id="frame-setup" data-src="/setup" title="Setup"></iframe>
 </div>
 
 <div id="panel-voice" class="panel">
@@ -517,13 +534,38 @@ async function pollSkills(){
 setInterval(pollSkills, 30000); pollSkills();
 
 /* ---------- tabs ---------- */
-document.querySelectorAll(".tabBtn").forEach(btn => btn.onclick = () => {
-  document.querySelectorAll(".tabBtn").forEach(b => b.classList.remove("active"));
+let currentTab = "home";
+function showTab(name){
+  const panel = document.getElementById("panel-" + name);
+  if(!panel) return;
+  document.querySelectorAll(".tabBtn").forEach(b =>
+    b.classList.toggle("active", b.dataset.tab === name));
   document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
-  btn.classList.add("active");
-  document.getElementById("panel-" + btn.dataset.tab).classList.add("active");
-  if(btn.dataset.tab === "voice") loadVoices();
-});
+  panel.classList.add("active");
+  /* load a frame the first time it's shown, and drop it when we leave —
+     a hidden camera iframe would sit there holding the webcam open */
+  document.querySelectorAll(".panel > iframe").forEach(f => {
+    const wanted = f.closest(".panel").id === "panel-" + name;
+    if(wanted && f.getAttribute("src") !== f.dataset.src) f.src = f.dataset.src;
+    if(!wanted && f.getAttribute("src")) f.removeAttribute("src");
+  });
+  if(name === "voice") loadVoices();
+  currentTab = name;
+}
+document.querySelectorAll(".tabBtn").forEach(btn =>
+  btn.onclick = () => { showTab(btn.dataset.tab); told = 0; });
+
+/* ---------- TARS deciding what's on screen ----------
+   "open the camera" used to launch a whole new browser window. Now it just
+   answers this, and the tab already open changes to it. */
+let told = 0;
+async function pollView(){
+  try{
+    const v = await (await fetch("/api/view")).json();
+    if(v.at > told){ told = v.at; if(v.tab !== currentTab) showTab(v.tab); }
+  }catch(e){}
+}
+setInterval(pollView, 700); pollView();
 
 /* ---------- voice picker ---------- */
 let voicesLoaded = false;
