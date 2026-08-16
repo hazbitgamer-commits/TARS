@@ -128,5 +128,87 @@ check("the question is passed to the streaming reply",
       "self._model_for(text)" in guts, True)
 check("and to the plain one", guts.count("_ask_ollama(messages, text)"), 2)
 
+print("\nlearning from what actually happened")
+# The half of OpenJarvis's argument worth more than the rules: measure, and
+# let the numbers overrule the assumptions. Every threshold above this line
+# is a guess made from one measurement on an idle machine.
+import tempfile
+
+from brain import wants_brain_report
+
+real_stats = mr.STATS
+try:
+    def fresh_stats():
+        mr.STATS = Path(tempfile.mktemp(suffix=".json"))
+        mr._stats = {}
+        mr._last.update(model="", at=0.0)
+
+    fresh_stats()
+    pretend(HIS_MACHINE, ["qwen2.5:3b", DEFAULT])
+    check("with nothing measured it follows the rules",
+          mr.pick("what time is it", DEFAULT)[0], "qwen2.5:3b")
+
+    check("it doesn't trust a handful of samples",
+          mr.typical("qwen2.5:3b"), 0.0)
+    for _ in range(mr.ENOUGH):
+        mr.record("qwen2.5:3b", 0.2)
+    check("once there are enough, it knows the real speed",
+          mr.typical("qwen2.5:3b"), 0.2)
+
+    fresh_stats()
+    for _ in range(8):
+        mr.record("qwen2.5:3b", 0.9)      # small model slower HERE
+        mr.record(DEFAULT, 0.4)
+    check("measurements overrule my assumption that small means fast",
+          mr.pick("what time is it", DEFAULT)[0], DEFAULT)
+
+    fresh_stats()
+    for _ in range(8):
+        mr.record("qwen2.5:3b", 0.2)
+    check("a model nobody complains about is fine",
+          mr.struggling("qwen2.5:3b"), False)
+    for _ in range(4):
+        mr._last.update(model="qwen2.5:3b", at=__import__("time").time())
+        mr.note_reask()
+    check("but one whose answers keep getting re-asked is not",
+          mr.struggling("qwen2.5:3b"), True)
+    check("and it stops being chosen",
+          mr.pick("what time is it", DEFAULT)[0], DEFAULT)
+
+    fresh_stats()
+    mr.record("qwen2.5:3b", 0.2)
+    mr._last.update(model="qwen2.5:3b", at=__import__("time").time() - 600)
+    mr.note_reask()
+    check("a question ten minutes later is a new question, not a complaint",
+          (mr._load_stats().get("qwen2.5:3b") or {}).get("reasks", 0), 0)
+
+    fresh_stats()
+    mr.record("qwen2.5:3b", 0.2)
+    mr.note_reask()
+    mr.note_reask()
+    check("one complaint per answer, not one per word",
+          (mr._load_stats().get("qwen2.5:3b") or {}).get("reasks", 0), 1)
+
+    fresh_stats()
+    check("it says so plainly when it hasn't learned anything yet",
+          "haven't answered enough" in mr.report(), True)
+    for _ in range(mr.ENOUGH):
+        mr.record("qwen2.5:3b", 0.35)
+    check("and reports real numbers once it has",
+          "qwen2.5:3b" in mr.report() and "0.3" in mr.report(), True)
+
+    check("recording a blank model is ignored rather than crashing",
+          mr.record("", 1.0), None)
+finally:
+    mr.STATS = real_stats
+    mr._stats = {}
+
+print("\nhe can actually ask about it")
+for said in ["which brain are you using", "how are your brains",
+             "what model are you on", "brain stats"]:
+    check(f'"{said}"', wants_brain_report(said), True)
+for said in ["how are you", "whats the weather", "which one is better"]:
+    check(f'not the report: "{said}"', wants_brain_report(said), False)
+
 print(f"\n{passed} passed, {failed} failed\n")
 sys.exit(1 if failed else 0)

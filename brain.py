@@ -270,6 +270,18 @@ def wants_stream(lowered: str) -> tuple[str, str]:
     return "", ""
 
 
+# "which brain are you using" — the routing is invisible otherwise, and a
+# thing you cannot see is a thing you cannot tell is working.
+_BRAINS_RX = re.compile(
+    r"\bhow are your brains?\b|\bwhich (?:brain|model) (?:are )?(?:you|u) "
+    r"(?:using|on)\b|\bwhat model are (?:you|u) (?:using|on)\b"
+    r"|\bbrain (?:stats|report)\b|\bhow fast are (?:you|u) answering\b")
+
+
+def wants_brain_report(lowered: str) -> bool:
+    return bool(_BRAINS_RX.search(lowered))
+
+
 # Presence — "watch for me". Kept apart from the room guard on purpose:
 # guard is about someone ELSE walking in, this is about HIM walking off, and
 # routing one to the other would arm the wrong thing entirely.
@@ -1144,6 +1156,14 @@ class Brain:
         guard_action = wants_guard(lowered)
         if guard_action:
             result = self.skills.run("guard", {"action": guard_action})
+            self.history += [{"role": "user", "content": text},
+                             {"role": "assistant", "content": result}]
+            return result
+
+        if wants_brain_report(lowered):
+            import model_router
+
+            result = model_router.report()
             self.history += [{"role": "user", "content": text},
                              {"role": "assistant", "content": result}]
             return result
@@ -3309,6 +3329,16 @@ class Brain:
         prior = re.sub(r"[^\w\s]", "", last_user.lower()).strip()
         if prior == norm or (len(norm) > 8 and
                 difflib.SequenceMatcher(None, prior, norm).ratio() > 0.9):
+            # Asking the same thing again is the cheapest honest measure of a
+            # bad answer there is, and it's about HIS questions rather than a
+            # benchmark. The router keeps score, and stops choosing a model
+            # whose answers keep getting re-asked.
+            try:
+                import model_router
+
+                model_router.note_reask()
+            except Exception:
+                pass
             return ("\n\nREPEAT: the owner just asked this exact thing last "
                     "turn. Don't just answer it fresh again — briefly say "
                     "you already told him, and ask what he actually needs: "
@@ -3515,15 +3545,23 @@ class Brain:
             return MODEL
 
     def _ask_ollama(self, messages: list[dict], text: str = "") -> str:
+        chosen = self._model_for(text)
+        began = time.time()
         r = requests.post(
             OLLAMA_URL,
-            json={"model": self._model_for(text), "messages": messages,
+            json={"model": chosen, "messages": messages,
                   "stream": False,
                   "keep_alive": KEEP_ALIVE,
                   "options": {"num_predict": 160}},  # spoken replies are short
             timeout=120,
         )
         r.raise_for_status()
+        try:
+            import model_router
+
+            model_router.record(chosen, time.time() - began)
+        except Exception:
+            pass
         return r.json()["message"]["content"].strip()
 
     def warm(self) -> None:

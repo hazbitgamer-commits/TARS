@@ -73,6 +73,121 @@ _TRIVIAL_RX = re.compile(
 _installed = {"names": [], "at": 0.0}
 _loaded = {"names": [], "at": 0.0}
 
+# ---- learning from what actually happens ------------------------------
+#
+# The second half of OpenJarvis's argument, and the half worth more than the
+# first: don't just route on rules, MEASURE what the routing did and let the
+# numbers correct you. Their version tracks energy, FLOPs and latency and
+# feeds it back into the router.
+#
+# It matters here because every threshold above this line is a guess I made.
+# I measured 3B at 0.5s and 14B at 2.2s once, on an idle machine, and wrote
+# rules around that. On a machine mid-game, or with a model that's fallen
+# out of memory, those numbers are wrong — and nothing would ever tell me.
+# So TARS times every answer and keeps the running truth per model.
+#
+# The second signal is cheaper and better than any benchmark: if he asks
+# something again within half a minute, the answer he got was no good. That
+# is a real quality measurement on his actual questions, and it costs
+# nothing to collect.
+from pathlib import Path
+
+STATS = Path(__file__).resolve().parent / "model_stats.json"
+REMEMBER = 40           # recent answers kept per model
+REASK_SECONDS = 30      # asking again this soon means the answer missed
+ENOUGH = 6              # samples before the numbers are worth trusting
+TOO_MANY_REASKS = 0.34  # a third of answers re-asked is a model doing badly
+
+_stats = {}
+_last = {"model": "", "at": 0.0, "score": 0.0}
+
+
+def _load_stats() -> dict:
+    global _stats
+    if _stats:
+        return _stats
+    try:
+        import json
+
+        _stats = json.loads(STATS.read_text(encoding="utf-8"))
+    except Exception:
+        _stats = {}
+    return _stats
+
+
+def _save_stats() -> None:
+    try:
+        import json
+
+        STATS.write_text(json.dumps(_stats, indent=1), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def record(model: str, seconds: float, score: float = 0.0) -> None:
+    """One answer happened. Note how long it really took."""
+    if not model:
+        return
+    stats = _load_stats()
+    row = stats.setdefault(model, {"times": [], "answers": 0, "reasks": 0})
+    row["times"] = (row["times"] + [round(float(seconds), 3)])[-REMEMBER:]
+    row["answers"] = row.get("answers", 0) + 1
+    _last.update(model=model, at=time.time(), score=score)
+    _save_stats()
+
+
+def note_reask() -> None:
+    """He asked again almost immediately — chalk that against whichever
+    model just answered. Only counts if it really was just now: a question
+    ten minutes later is a new question, not a complaint."""
+    if not _last["model"] or time.time() - _last["at"] > REASK_SECONDS:
+        return
+    stats = _load_stats()
+    row = stats.setdefault(_last["model"], {"times": [], "answers": 0,
+                                            "reasks": 0})
+    row["reasks"] = row.get("reasks", 0) + 1
+    _last["model"] = ""            # one complaint per answer, not per word
+    _save_stats()
+
+
+def typical(model: str) -> float:
+    """How long this model really takes here, or 0 if we don't know yet."""
+    row = _load_stats().get(model) or {}
+    times = sorted(row.get("times", []))
+    if len(times) < ENOUGH:
+        return 0.0
+    return times[len(times) // 2]          # median: one stall shouldn't count
+
+
+def struggling(model: str) -> bool:
+    """Is this model's work being re-asked more than it should be?"""
+    row = _load_stats().get(model) or {}
+    answers = row.get("answers", 0)
+    if answers < ENOUGH:
+        return False
+    return (row.get("reasks", 0) / answers) > TOO_MANY_REASKS
+
+
+def report() -> str:
+    """What TARS has learned about its own brains, in plain words."""
+    stats = _load_stats()
+    if not stats:
+        return "I haven't answered enough yet to know which of my brains is best."
+    lines = []
+    for model, row in sorted(stats.items(),
+                             key=lambda kv: -kv[1].get("answers", 0)):
+        answers = row.get("answers", 0)
+        if not answers:
+            continue
+        median = typical(model)
+        speed = f"about {median:.1f}s" if median else "not enough yet"
+        reasks = row.get("reasks", 0)
+        note = ""
+        if answers >= ENOUGH and reasks:
+            note = f", {round(100 * reasks / answers)}% asked again"
+        lines.append(f"  {model}: {answers} answers, {speed}{note}")
+    return "Here's how my brains are doing:\n" + "\n".join(lines)
+
 
 def _ollama(path: str, cache: dict, seconds: float) -> list:
     """Ask Ollama something cheap, and don't ask again for a while.
@@ -166,11 +281,20 @@ def pick(text: str, default: str, gaming: bool = False) -> tuple:
         # only if it's already loaded, or it's small enough that loading it
         # costs less than the time it saves
         if small and (small in here or not here):
+            # ...and only if the measurements agree. I assumed the small
+            # model is quicker. Once there are enough real timings from THIS
+            # machine, they decide instead of my assumption — if the small
+            # one isn't actually faster here, there is no reason to use it.
+            mine, theirs = typical(small), typical(default)
+            if mine and theirs and mine >= theirs * 0.9:
+                return default, ""
+            if struggling(small):
+                return default, ""       # its answers keep getting re-asked
             return small, "a quick one"
 
     if hard >= HARD_ABOVE:
         big = _first_available(DEEP)
-        if big and big != default:
+        if big and big != default and not struggling(big):
             return big, "this one needs some thinking"
 
     return default, ""
