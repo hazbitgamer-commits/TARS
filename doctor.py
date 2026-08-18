@@ -13,6 +13,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -180,6 +181,34 @@ def check_audio() -> None:
         if idx is None:
             problems.append("I can't find a microphone at all")
             return
+        # ASK THE LOOP THAT'S ALREADY LISTENING, don't open a second stream.
+        #
+        # This check opened its own recording on a device TARS itself has
+        # held open since startup. A second stream on a busy device hands
+        # back near-silence, so the test concluded the microphone was broken
+        # and sent him to Windows sound settings — 45 times across the logs,
+        # every one of them while his voice commands were working perfectly.
+        #
+        # Someone hit this before and responded by lowering the threshold
+        # (the comment below). That treated the symptom: the reading was
+        # never measuring the microphone, it was measuring the contention.
+        #
+        # The listening loop publishes what it actually hears, from the
+        # stream that is genuinely open. That's the real answer, and no test
+        # run from out here can beat it.
+        try:
+            import dashboard
+
+            heard_at, heard_level = dashboard.EARS
+            if heard_at and time.time() - heard_at < 120:
+                if heard_level <= 0.0:
+                    problems.append(
+                        "my microphone is open but completely dead — nothing "
+                        "at all is arriving from it")
+                return          # a live reading settles it either way
+        except Exception:
+            pass                # no loop running (doctor run on its own)
+
         rec = sd.rec(int(16000 * 1.2), samplerate=16000, channels=1,
                      dtype="float32", device=idx)
         sd.wait()

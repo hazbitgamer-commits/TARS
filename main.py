@@ -202,6 +202,40 @@ def start_watchdog() -> None:
     _threads.Thread(target=_watchdog, daemon=True).start()
 
 
+TOLD_FILE = BASE / "told_about.json"
+SAY_AGAIN_AFTER = 12 * 3600     # same problem, same voice, twice a day at most
+
+
+def _worth_saying(problems: list) -> list:
+    """Which of these he hasn't already been told about recently.
+
+    A problem that is still there tomorrow is not news. TARS said "my
+    microphone is barely registering anything — check its level in Windows
+    sound settings" forty-five times, once per restart, and every one of
+    them was the same sentence about the same thing. Being told is useful;
+    being told forty-five times is just noise he learns to ignore, which is
+    worse than not saying it — because then the ONE that matters gets
+    ignored too.
+
+    Anything new is always said. Anything repeated waits half a day.
+    """
+    now = time.time()
+    try:
+        told = json.loads(TOLD_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        told = {}
+    fresh = [p for p in problems if now - told.get(p, 0) > SAY_AGAIN_AFTER]
+    for p in fresh:
+        told[p] = now
+    # forget problems that have gone away, so if one comes back it's news
+    told = {k: v for k, v in told.items() if k in problems}
+    try:
+        TOLD_FILE.write_text(json.dumps(told, indent=1), encoding="utf-8")
+    except OSError:
+        pass
+    return fresh
+
+
 def _mid_game() -> bool:
     """Is he in a game right now? If so, one command means one command."""
     try:
@@ -432,6 +466,7 @@ def main() -> None:
             import doctor
 
             problems, fixed = doctor.run_checks(fix=True)
+            problems = _worth_saying(problems)
             if problems:
                 announce.post("Heads up — " + doctor.spoken_summary(
                     problems, fixed), hold_during_quiet=True)

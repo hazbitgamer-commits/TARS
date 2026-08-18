@@ -96,5 +96,42 @@ after_reply = loop[loop.index("first_turn = False\n\n                # Mid-game"
 check("it breaks BEFORE the still-listening blip",
       after_reply.index("if _mid_game():") < after_reply.index("beep(660"), True)
 
+print("\nsaying the same problem forty-five times")
+# TARS said "my microphone is barely registering anything — check its level
+# in Windows sound settings" 45 times across the logs, once per restart,
+# while his voice commands worked perfectly. Two faults: the check was wrong
+# (it opened a second mic stream on a device TARS already held, and measured
+# the contention), and nothing stopped it repeating.
+import json as _json
+
+real_told = main.TOLD_FILE
+main.TOLD_FILE = Path("workshop") / "_told_check.json"
+try:
+    main.TOLD_FILE.unlink(missing_ok=True)
+    mic = "my microphone is barely registering anything"
+    check("the first time, he's told", main._worth_saying([mic]), [mic])
+    check("the next restart, it stays quiet", main._worth_saying([mic]), [])
+    check("and the one after that", main._worth_saying([mic]), [])
+    check("but something NEW is always said",
+          main._worth_saying([mic, "no speakers"]), ["no speakers"])
+    main._worth_saying([])          # problem clears
+    check("a problem that goes away and comes back is news again",
+          main._worth_saying([mic]), [mic])
+    check("nothing wrong means nothing said", main._worth_saying([]), [])
+    check("it waits half a day, not forever", main.SAY_AGAIN_AFTER <= 24 * 3600,
+          True)
+finally:
+    main.TOLD_FILE.unlink(missing_ok=True)
+    main.TOLD_FILE = real_told
+
+print("\nthe mic check asks the loop that's actually listening")
+doc = Path("doctor.py").read_text(encoding="utf-8")
+audio = doc[doc.index("def check_audio"):doc.index("def check_extras")]
+check("it reads the live listening level", "dashboard.EARS" in audio, True)
+check("and only complains when nothing at all is arriving",
+      "heard_level <= 0.0" in audio, True)
+check("the live reading settles it, rather than opening a rival stream",
+      audio.index("dashboard.EARS") < audio.index("sd.rec("), True)
+
 print(f"\n{passed} passed, {failed} failed\n")
 sys.exit(1 if failed else 0)
