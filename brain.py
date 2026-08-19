@@ -1290,6 +1290,10 @@ class Brain:
             first_word = lowered.split()[0] if lowered.split() else ""
             if len(close) == 1:
                 name = close.pop()
+            elif self._snap_invented(name):
+                # "track_package" means parcels, "repeat" means say_again —
+                # the invented name still describes the skill it wanted
+                name = self._snap_invented(name)
             elif first_word in ("how", "what", "why", "where", "when", "who",
                                 "can", "could", "do", "does", "is", "are",
                                 "should", "whats"):
@@ -1989,6 +1993,23 @@ class Brain:
             route["args"] = {"target": target}
         if name == "type_text" and "type" not in lowered:
             name = "chat"
+        # "remind me to take breaks every 45 minutes" is a standing habit, not a
+        # one-off reminder — but it is phrased exactly like one, and the router
+        # hears "remind me ... every N minutes" and reaches for timers every
+        # time. Rest-break language wins outright.
+        if name in ("timers", "recurring") and re.search(r"\bbreaks?\b", lowered) \
+                and re.search(r"\b(take|taking|rest|resting|eyes?|stretch|stand|"
+                              r"screen|regular|reminder)\b", lowered) \
+                and not re.search(r"\bbreak (the|it|my|a|this)\b", lowered):
+            name = "breaks"
+            gap = re.search(r"(\d+)\s*min", lowered)
+            off = re.search(r"\b(stop|don'?t|no more|turn off|cancel|quit|"
+                            r"disable|enough)\b", lowered)
+            asking = re.search(r"\b(when|what|how long|next break|am i|are my)\b",
+                               lowered)
+            route["args"] = {
+                "action": "off" if off else ("status" if asking else "on"),
+                "minutes": gap.group(1) if gap else ""}
         # a CHAIN of screen actions (click X, type Y, find Z...) must run as
         # one screen_task job, not just its first click
         # an EXPLICIT chain ("click X, type Y, then Z") outranks the agent:
@@ -2088,6 +2109,13 @@ class Brain:
             # the owner has taught TARS before is used straight away
             args = self.search_memory.refine(name, route.get("args") or {})
             try:
+                # remember how things were first, so "undo that" can put them back
+                try:
+                    import undo as _undo
+
+                    _undo.snapshot(name, args)
+                except Exception:
+                    pass
                 result = self.skills.run(name, args)
             except Exception as e:
                 return f"That skill misfired: {e}"
@@ -2514,6 +2542,91 @@ class Brain:
         scored.sort(key=lambda pair: -pair[0])
         return [s for _, s in scored[:keep]]
 
+    def _snap_invented(self, invented: str) -> str | None:
+        """Map a skill name the router made up onto the real one it meant.
+
+        It invents names that describe the job well even when they're wrong:
+        track_package for parcels, unit_conversion for convert, "voice Memo"
+        for voice_memo, repeat for say_again. Two passes — spelling first,
+        then the words of the invented name against what each skill says it
+        does. Only ever returns a winner that beats the runner-up outright,
+        so an ambiguous guess still falls through to the old behaviour.
+        """
+        import difflib
+
+        tokens = [t for t in re.findall(r"[a-z]+", str(invented).lower())
+                  if len(t) > 2]
+        if not tokens:
+            return None
+        catalog = self.skills.catalog()
+        names = [s["skill"] for s in catalog]
+
+        spelled = difflib.get_close_matches(
+            "_".join(tokens), names, n=1, cutoff=0.78)
+        if spelled:
+            return spelled[0]
+
+        # One idea per word: "alarms" should find a skill that says "alarm",
+        # "unit" one that says "units". Variants are alternatives for the SAME
+        # token, never extra points — otherwise "repeat" scores twice against
+        # a skill that happens to say both "repeat" and "repeats".
+        def _variants(token: str) -> set[str]:
+            out = {token}
+            if token.endswith("s") and len(token) > 3:
+                out.add(token[:-1])
+            else:
+                out.add(token + "s")
+            if token.endswith("ion") and len(token) > 6:
+                out.add(token[:-3])
+            return out
+
+        variants = {t: _variants(t) for t in tokens}
+        haystacks = {e["skill"]: (e["skill"] + " " +
+                                  e.get("description", "")).lower()
+                     for e in catalog}
+
+        # whole words only: "REPEATING weekly reminders" is not the skill that
+        # repeats what was just said, however much it looks like it
+        def _find(token: str, haystack: str) -> int:
+            best = -1
+            for form in variants[token]:
+                hit = re.search(rf"\b{re.escape(form)}\b", haystack)
+                if hit and (best < 0 or hit.start() < best):
+                    best = hit.start()
+            return best
+
+        # a word that only one skill uses ("package", "zone") identifies it far
+        # better than one every second skill uses ("time", "screen", "open")
+        weights = {t: 0.0 for t in tokens}
+        for token in tokens:
+            appears = sum(1 for h in haystacks.values() if _find(token, h) >= 0)
+            weights[token] = 1.0 / appears if appears else 0.0
+
+        scores, earliest = {}, {}
+        for skill, haystack in haystacks.items():
+            score, first = 0.0, len(haystack)
+            for token in tokens:
+                at = _find(token, haystack)
+                if at < 0:
+                    continue
+                score += weights[token]
+                first = min(first, at)
+            score += 0.5 * sum(1 for t in tokens
+                               if any(v in skill.lower() for v in variants[t]))
+            if score:
+                scores[skill] = score
+                earliest[skill] = first
+        if not scores:
+            return None
+        # ranked by score, then by which skill leads with that word — the
+        # descriptions here open with what the skill IS ("REPEAT what TARS...")
+        ranked = sorted(scores.items(), key=lambda kv: (-kv[1], earliest[kv[0]]))
+        # only act on a clear winner; a coin-flip guess is worse than falling
+        # through to the question/self-teach handling below
+        if len(ranked) == 1 or ranked[0][1] >= ranked[1][1] * 1.35:
+            return ranked[0][0]
+        return None
+
     def _route(self, text: str, must_act: bool = False) -> dict:
         catalog = self._shortlist(text, self._compact_catalog(
             self.skills.catalog()))
@@ -2577,9 +2690,26 @@ class Brain:
             'show me a video of how to fold a fitted sheet -> {"skill": "browser_search", "args": {"kind": "video", "query": "how to fold a fitted sheet"}}\n'
             'select all and delete -> {"skill": "keyboard", "args": {"actions": "select all, delete"}}\n'
             'press enter -> {"skill": "keyboard", "args": {"actions": "enter"}}\n'
-            'undo that -> {"skill": "keyboard", "args": {"actions": "undo"}}\n'
+            'press undo -> {"skill": "keyboard", "args": {"actions": "undo"}}\n'
+            'undo that -> {"skill": "undo", "args": {}}\n'
+            'put that back the way it was -> {"skill": "undo", "args": {}}\n'
+            'snooze -> {"skill": "snooze", "args": {}}\n'
+            'give me five more minutes -> {"skill": "snooze", "args": {"minutes": "5"}}\n'
+            'how do you say good morning in japanese -> {"skill": "translate", "args": {"text": "good morning", "language": "japanese"}}\n'
+            'how many kilometres in five miles -> {"skill": "convert", "args": {"query": "how many kilometres in 5 miles"}}\n'
+            'what is 50 us dollars in aussie dollars -> {"skill": "convert", "args": {"query": "50 us dollars in australian dollars"}}\n'
+            'what time is it in london -> {"skill": "convert", "args": {"query": "what time is it in london"}}\n'
+            'stop the music in twenty minutes -> {"skill": "sleep_timer", "args": {"action": "music", "minutes": "20"}}\n'
+            'put the pc to sleep in an hour -> {"skill": "sleep_timer", "args": {"action": "sleep", "minutes": "60"}}\n'
+            'remind me to take breaks every 45 minutes -> {"skill": "breaks", "args": {"action": "on", "minutes": "45"}}\n'
+            'take a voice memo -> {"skill": "voice_memo", "args": {}}\n'
+            'say that again -> {"skill": "say_again", "args": {}}\n'
+            'spell that -> {"skill": "say_again", "args": {"style": "spell"}}\n'
+            'wheres my package -> {"skill": "parcels", "args": {}}\n'
+            'what have i got coming in the post -> {"skill": "parcels", "args": {}}\n'
             'what are my pc specs -> {"skill": "pc_specs", "args": {}}\n'
-            'set my screen brightness to 50 -> {"skill": "new_skill", "args": {"request": "set screen brightness to 50"}}\n'
+            'set my screen brightness to 50 -> {"skill": "brightness", "args": {"level": "50"}}\n'
+            'dim the screen -> {"skill": "brightness", "args": {"level": "-15"}}\n'
             'turn my desk lamp red -> {"skill": "new_skill", "args": {"request": "turn the desk lamp red"}}\n'
             'set humor to 90 -> {"skill": "personality", "args": {"action": "set", "name": "humor", "value": "90"}}\n'
             'dial the sarcasm down -> {"skill": "personality", "args": {"action": "adjust", "name": "sarcasm", "value": "-15"}}\n'
@@ -2725,6 +2855,48 @@ class Brain:
                        "misheard here. Pick the skill that comes closest, and "
                        "resolve 'them'/'those'/'it' from the conversation "
                        "above.")
+        # The prompt is 23k characters and 170 examples deep, and the router had
+        # started answering with skills that don't exist — track_package,
+        # unit_conversion, "voice Memo" — names that describe the job perfectly
+        # and route nowhere. Handing the model a schema whose skill field is an
+        # enum of the shortlisted names makes an invented one impossible rather
+        # than merely discouraged.
+        # The enum exists to stop INVENTED names, not to narrow the choice, so
+        # it lists every real skill — the shortlist above already decides whose
+        # descriptions get shown. Enumerating only the shortlist made a correct
+        # answer impossible whenever the word-overlap filter missed the right
+        # skill ("who won the fa cup final" could no longer reach web_search).
+        allowed = sorted({s["skill"] for s in self.skills.catalog()}
+                         | {"chat", "new_skill", "misheard"})
+        # examples still get trimmed to what's on the shortlist, plus the
+        # handful that teach restraint and the general-purpose fallbacks
+        keep_examples = {s["skill"] for s in catalog} | {
+            "chat", "misheard", "new_skill", "web_search", "browser_search",
+            "search_files", "recall", "remember"}
+
+        # ...and the examples were doing the same damage from the other end.
+        # Every one of the 170 is shown for every command, so the handful that
+        # matter sit behind a wall of irrelevant ones. Keep the examples for
+        # the skills actually on the shortlist (chat/misheard always: they
+        # teach TARS when NOT to act).
+        kept, dropped = [], 0
+        for line in system.splitlines():
+            if "->" in line and '"skill"' in line:
+                shown = re.search(r'"skill":\s*"([^"]+)"', line)
+                if shown and shown.group(1) not in keep_examples:
+                    dropped += 1
+                    continue
+            kept.append(line)
+        if dropped:
+            system = "\n".join(kept)
+        schema = {
+            "type": "object",
+            "properties": {
+                "skill": {"type": "string", "enum": allowed},
+                "args": {"type": "object"},
+            },
+            "required": ["skill"],
+        }
         try:
             r = requests.post(
                 OLLAMA_URL,
@@ -2735,7 +2907,7 @@ class Brain:
                         {"role": "user", "content": text},
                     ],
                     "stream": False,
-                    "format": "json",
+                    "format": schema,
                     "keep_alive": KEEP_ALIVE,
                     "options": {"temperature": 0},
                 },

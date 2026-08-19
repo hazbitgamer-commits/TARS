@@ -149,32 +149,73 @@ def _eleven(text: str):
         return None
 
 
+NIGHT_GAIN = 0.55   # how much of full volume TARS uses during quiet hours
+NIGHT_SPEED = 0.94  # and a touch slower, the way people talk at night
+
+
+def _night_mode() -> bool:
+    """Quiet hours = speak softly. Nobody wants a robot shouting at 2am."""
+    try:
+        import quiet
+
+        return bool(quiet.is_active()[0])
+    except Exception:
+        return False
+
+
+def _soften(result):
+    """Take the edge off a clip for night-time listening."""
+    if result is None:
+        return None
+    audio, rate = result
+    try:
+        return audio * NIGHT_GAIN, rate
+    except Exception:
+        return result
+
+
 def _synth(text: str):
     """(audio, samplerate) from the best engine available, else None.
 
     Kokoro voices are named like bm_george; edge-tts ones like en-GB-RyanNeural.
     """
     text = _prep(text)
+    night = _night_mode()
     premium = _eleven(text)
     if premium is not None:
-        return premium
+        return _soften(premium) if night else premium
     if "_" in VOICE and "-" not in VOICE:
         try:
-            return _kokoro_engine().create(text, voice=VOICE, speed=_rate_to_speed())
+            speed = _rate_to_speed() * (NIGHT_SPEED if night else 1.0)
+            out = _kokoro_engine().create(text, voice=VOICE, speed=speed)
+            return _soften(out) if night else out
         except Exception:
             pass
     try:
-        mp3 = asyncio.run(_fetch_mp3(text))
-        return sf.read(io.BytesIO(mp3), dtype="float32")
+        mp3 = asyncio.run(_fetch_mp3(text, _night_rate() if night else None))
+        out = sf.read(io.BytesIO(mp3), dtype="float32")
+        return _soften(out) if night else out
     except Exception:
         return None
 
 
-async def _fetch_mp3(text: str) -> bytes:
+def _night_rate() -> str:
+    """RATE, minus a few percent, for the softer night delivery."""
+    try:
+        pct = int(RATE.replace("%", "").replace("+", "") or 0)
+        if RATE.strip().startswith("-"):
+            pct = -abs(pct)
+    except ValueError:
+        pct = 0
+    return f"{max(-50, pct - 8):+d}%"
+
+
+async def _fetch_mp3(text: str, rate: str | None = None) -> bytes:
     import edge_tts
 
     buf = io.BytesIO()
-    async for chunk in edge_tts.Communicate(_prep(text), VOICE, rate=RATE).stream():
+    async for chunk in edge_tts.Communicate(_prep(text), VOICE,
+                                            rate=rate or RATE).stream():
         if chunk["type"] == "audio":
             buf.write(chunk["data"])
     return buf.getvalue()
