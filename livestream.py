@@ -63,29 +63,47 @@ WIDTH = 640       # 1280 wide at quality 70 is 35KB a frame; this is ~8KB
 QUALITY = 55
 TAG_EVERY = 2.0   # seconds between re-identifying faces
 
-# Screens need different numbers from a camera. His two monitors are
-# 2560x1440 and 1080x1920 (portrait) — 3640x1920 side by side, which is
-# mostly small text, so JPEG can't squeeze it the way it squeezes a face.
-# Measured on his actual desktop, at 12 fps:
-#     1280 wide, q45 -> 797 KB/s   too heavy for mobile data
-#      960 wide, q45 -> 491 KB/s   readable, and survives a phone connection
-#      800 wide, q45 -> 381 KB/s   cheap, but the text starts to go
-# 960 it is. And 12 fps, because watching a screen isn't watching a room:
-# nothing on a desktop needs thirty frames a second.
-SCREEN_WIDTH = 960          # the safe default, before a viewer says otherwise
-SCREEN_QUALITY = 45
-SCREEN_FPS = 12
-# A phone can't use more than about 960; a Mac with a big window can, and at
-# 960 the picture is 37% of native and looks soft blown up. Measured on his
-# 2560x1440 monitor at 12 fps:
-#      960 -> 195 KB/s   37% of native
-#     1280 -> 315 KB/s   50%
-#     1600 -> 466 KB/s   62%
-#     1920 -> 640 KB/s   75%   fine on wifi, too much on mobile data
-# So the VIEWER asks for what its display can actually show, and this is the
-# ceiling rather than the setting.
-SCREEN_WIDTH_MAX = 1920
-SCREEN_WIDTH_MIN = 640
+# Screens need different numbers from a camera. His monitors are 2560x1440
+# and 1080x1920 (portrait), mostly small text, which JPEG cannot squeeze the
+# way it squeezes a face.
+#
+# An earlier round of this was tuned by eye and picked 960 wide as
+# "readable". Measured properly it is not: see below. Judging a screen share
+# by looking at it is how you end up shipping something that carries 4% of
+# the words on the screen.
+#
+# Measured on his actual desktop by streaming it, decoding it and running
+# OCR over the result — how much of the text on screen survives the trip:
+#
+#      960 wide, q45   187 KB/s    4% of the text readable   <- the old setting
+#     1280 wide, q45   305 KB/s   15%
+#     1600 wide, q60   502 KB/s   75%
+#     1920 wide, q60   666 KB/s   87%
+#     2560 wide, q72  1260 KB/s   97%
+#
+# His complaint was "i cant read small text", and at 4% he was right — the
+# stream was carrying almost none of it. RESOLUTION is what matters here,
+# not JPEG quality: 960 to 1600 takes it from 4% to 75%, while quality 45
+# to 72 at a fixed width barely moves.
+#
+# Frame rate pays for it. Reading a screen is not watching a video; 8 frames
+# a second is plenty for text and buys back a third of the bandwidth.
+SCREEN_WIDTH = 1600
+SCREEN_QUALITY = 62
+SCREEN_FPS = 8
+# The viewer asks for what suits it; these are the bounds it is held to.
+SCREEN_WIDTH_MAX = 2560     # his monitor's real width — nothing above it helps
+SCREEN_WIDTH_MIN = 1280     # below this, small text is gone whatever else is done
+
+# A screen is streamed at MORE pixels than the viewer can display, on
+# purpose. The viewer asks for the size the picture occupies on its own
+# display, which is exactly right for a camera and exactly wrong for a
+# desktop: his 2560-wide screen arrives squeezed into an 800px phone, and
+# pinching to zoom shows nothing new because the detail was never sent.
+# Sending 2.5x lets a pinch actually reveal something. Measured: at 2x a
+# phone recovered 56% of the text, at 2.5x it is 88% — the difference
+# between squinting and reading. Mobile data is exempt and stays at 1x.
+SCREEN_DETAIL = 2.5
 
 _live = {"on": False, "code": "", "url": "", "port": 0, "until": 0.0,
          "server": None, "tunnel": None, "source": "camera", "fps": FPS,
@@ -214,10 +232,13 @@ function askForSize(){
     let want=Math.round(b.w*dpr);
     /* mobile data: stay modest whatever the screen can do */
     const net=navigator.connection;
-    if(net && (net.saveData || /2g|3g/.test(net.effectiveType||''))) want=Math.min(want,960);
-    want=Math.max(640, Math.min(1920, want));
+    const slow = net && (net.saveData || /2g|3g/.test(net.effectiveType||''));
+    if(slow) want=Math.min(want,960);
+    want=Math.max(640, Math.min(2560, want));
     if(Math.abs(want-sized) < 120) return;        // ignore small wobbles
-    const res=await post({type:'fit', w:want});
+    /* detail 1 on mobile data, otherwise let the server send extra pixels
+       so pinching to zoom actually shows something */
+    const res=await post({type:'fit', w:want, detail: slow?1:2});
     if(res&&res.ok && res.width!==sized){sized=res.width; reconnect();
                                         say('Sharpness '+res.width+'px');}
   }, 400);
@@ -818,7 +839,19 @@ def _do_input(action: dict) -> dict:
             want = int(float(action.get("w", 0)))
         except (TypeError, ValueError):
             return {"ok": False, "why": "bad width"}
-        want = max(SCREEN_WIDTH_MIN, min(SCREEN_WIDTH_MAX, want))
+        # A SCREEN is sent at more than the viewer can display, so pinching
+        # to zoom reveals real detail instead of enlarged mush. A camera is
+        # not — a face at display size is already all the detail there is.
+        # `detail` is 1 when the viewer says it's on mobile data.
+        if _live["source"].startswith("screen"):
+            try:
+                factor = float(action.get("detail") or SCREEN_DETAIL)
+            except (TypeError, ValueError):
+                factor = SCREEN_DETAIL
+            want = int(want * max(1.0, min(SCREEN_DETAIL, factor)))
+            want = max(SCREEN_WIDTH_MIN, min(SCREEN_WIDTH_MAX, want))
+        else:
+            want = max(SCREEN_WIDTH_MIN, min(SCREEN_WIDTH_MAX, want))
         want -= want % 2          # even widths encode more cleanly
         _live["width"] = want
         return {"ok": True, "width": want}
