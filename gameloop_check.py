@@ -96,6 +96,57 @@ after_reply = loop[loop.index("first_turn = False\n\n                # Mid-game"
 check("it breaks BEFORE the still-listening blip",
       after_reply.index("if _mid_game():") < after_reply.index("beep(660"), True)
 
+print("\nthe watchdog: catch a jam, never touch an idle TARS")
+# The first version asked "is the state anything but listening?" — and the
+# idle state is called "standby", so it restarted him every three minutes all
+# day. Each restart re-ran the health check and re-announced the microphone
+# warning, which he reported as "mic notifications again".
+import time as _t
+
+
+def would_restart(state, seconds):
+    main._alive.update(state=state, since=_t.time() - seconds)
+    return (main._alive["state"] in main.BUSY_STATES
+            and _t.time() - main._alive["since"] > main.STUCK_AFTER)
+
+
+check("idle in STANDBY is not stuck — the bug that looped all day",
+      would_restart("standby", 600), False)
+check("listening for an hour is not stuck", would_restart("listening", 3600), False)
+check("offline is not stuck either", would_restart("offline", 600), False)
+check("but a reply jammed for minutes IS", would_restart("speaking", 300), True)
+check("and thinking that never ends", would_restart("thinking", 300), True)
+check("a normal reply is left alone", would_restart("speaking", 5), False)
+check("only real work counts as busy",
+      sorted(main.BUSY_STATES), ["speaking", "thinking"])
+
+main.note_state("listening")
+check("going back to listening clears it", main._alive["state"], "listening")
+_began = main._alive["since"]
+main.note_state("listening")
+check("repeating a state doesn't restart the clock", main._alive["since"], _began)
+
+_real_wd = main.RECOVERED_FILE
+main.RECOVERED_FILE = Path("workshop") / "_wd_check.json"
+try:
+    main.RECOVERED_FILE.unlink(missing_ok=True)
+    check("with no history a restart is allowed",
+          _t.time() - main._last_recovery() > 3600, True)
+    main._remember_recovery()
+    check("straight after one, another is refused",
+          _t.time() - main._last_recovery() > 3600, False)
+    check("and that memory is ON DISK, so a restart cannot forget it",
+          main.RECOVERED_FILE.exists(), True)
+finally:
+    main.RECOVERED_FILE.unlink(missing_ok=True)
+    main.RECOVERED_FILE = _real_wd
+
+_guts = Path("main.py").read_text(encoding="utf-8")
+_wd = _guts[_guts.index("def _watchdog"):_guts.index("def start_watchdog")]
+check("it tells him on his phone rather than just vanishing",
+      "tars_phone" in _wd, True)
+check("and a broken watchdog can't take TARS down", "except Exception" in _wd, True)
+
 print("\nsaying the same problem forty-five times")
 # TARS said "my microphone is barely registering anything — check its level
 # in Windows sound settings" 45 times across the logs, once per restart,

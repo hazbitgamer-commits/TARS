@@ -135,8 +135,42 @@ class AutoGain:
 # clipping — any slow skill can do it. So this watches from outside: if TARS
 # hasn't been listening for a few minutes, something has it stuck, and it
 # restarts rather than sitting there deaf.
-STUCK_AFTER = 180        # seconds not listening before TARS is presumed stuck
+STUCK_AFTER = 180        # seconds stuck mid-reply before TARS is presumed jammed
+
+# ONLY these two mean work is in progress. Everything else — listening,
+# standby, offline — is TARS sitting there perfectly happy.
+#
+# The first version of this asked "is the state anything other than
+# listening?", which sounded right and was catastrophically wrong: the idle
+# state is called "standby", so a quiet room looked identical to a jam. It
+# restarted TARS every three minutes all day, and because each restart runs
+# the start-up health check, it also spammed him with the mic warning
+# fourteen times. The bug reported as "mic notifications again" was this.
+BUSY_STATES = ("thinking", "speaking")
 _alive = {"state": "listening", "since": time.time(), "recovered": 0.0}
+
+# Restarting is remembered ON DISK, not just in memory. The in-process guard
+# was useless for a restart loop: every new process started with a clean
+# slate and restarted again three minutes later, forever.
+RECOVERED_FILE = BASE / "watchdog_last.json"
+
+
+def _last_recovery() -> float:
+    """When the watchdog last restarted TARS — across restarts, not just
+    within this process."""
+    try:
+        return float(json.loads(RECOVERED_FILE.read_text(encoding="utf-8"))
+                     .get("at", 0))
+    except (OSError, ValueError, AttributeError):
+        return 0.0
+
+
+def _remember_recovery() -> None:
+    try:
+        RECOVERED_FILE.write_text(json.dumps({"at": time.time()}),
+                                  encoding="utf-8")
+    except OSError:
+        pass
 
 
 def note_state(state: str) -> None:
@@ -151,13 +185,11 @@ def _watchdog() -> None:
     while True:
         time.sleep(10)
         try:
-            stuck = (_alive["state"] != "listening"
+            stuck = (_alive["state"] in BUSY_STATES
                      and time.time() - _alive["since"] > STUCK_AFTER)
-            # once per ten minutes at most: a restart that fails must not
-            # become a machine that restarts itself forever
-            if not stuck or time.time() - _alive["recovered"] < 600:
+            if not stuck or time.time() - _last_recovery() < 3600:
                 continue
-            _alive["recovered"] = time.time()
+            _remember_recovery()
             stuck_for = int(time.time() - _alive["since"])
             log("said", f"(watchdog: stuck in '{_alive['state']}' for "
                         f"{stuck_for}s — restarting)")
