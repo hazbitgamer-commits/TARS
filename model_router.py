@@ -28,6 +28,17 @@ it: a coding question, or something genuinely hard.
 
 One rule that isn't from the paper: while he's gaming, everything goes to
 the smallest model. That's from watching TARS eat 40% of a core mid-match.
+
+August 2026 addendum: there is now a cloud brain (cloud_brain.py — Ox Alpha,
+a free frontier preview on OpenRouter). It changes two conclusions above.
+The escalation tier this machine never had a good local model for now has
+a genuinely big model that costs nothing and loads nothing. And the gaming
+rule inverts: the whole point of dropping to the 3B mid-game was local
+compute, and a cloud model uses none at all — so mid-game the BIGGEST brain
+is now also the cheapest one for the PC. Trivial and everyday questions
+still never leave the house: local stays the default, the cloud has to be
+earned, and struggling() judges Ox by exactly the same re-ask evidence as
+everyone else.
 """
 import re
 import time
@@ -298,6 +309,23 @@ def score(text: str) -> tuple:
     return max(0.0, min(1.0, value)), signals
 
 
+def _cloud() -> str:
+    """The cloud brain's routing name, or "" when it shouldn't answer:
+    no key, sulking after a recent failure, or its answers keep getting
+    re-asked — the same evidence that benches any local model."""
+    try:
+        import cloud_brain
+
+        if not cloud_brain.available():
+            return ""
+        name = cloud_brain.routing_name()
+        if struggling(name):
+            return ""
+        return name
+    except Exception:
+        return ""
+
+
 def pick(text: str, default: str, gaming: bool = False) -> tuple:
     """(model to use, why). Returns the default when nothing is worth moving
     for — which is most of the time, and is the point."""
@@ -305,11 +333,17 @@ def pick(text: str, default: str, gaming: bool = False) -> tuple:
     here = resident()
 
     if gaming:
+        cloud = _cloud()
+        if cloud:
+            return cloud, "mid-game — the cloud brain costs this PC nothing"
         small = _first_available(FAST)
         if small:
             return small, "mid-game, so the small quick one"
 
     if signals["code"]:
+        cloud = _cloud()
+        if cloud:
+            return cloud, "a coding question, and the cloud brain is the best coder in the house"
         coder = _first_available(CODE)
         if coder:
             return coder, "a coding question"
@@ -331,6 +365,9 @@ def pick(text: str, default: str, gaming: bool = False) -> tuple:
             return small, "a quick one"
 
     if hard >= HARD_ABOVE:
+        cloud = _cloud()
+        if cloud:
+            return cloud, "this one needs some proper thinking"
         big = _first_available(DEEP)
         if big and big != default and not struggling(big):
             return big, "this one needs some thinking"

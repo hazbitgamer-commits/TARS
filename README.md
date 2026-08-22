@@ -13,6 +13,15 @@
 **$0.** Local brain (Ollama), free Microsoft voice, free wake-word tier,
 and hard tasks go through your own Claude subscription (optional).
 
+Since Aug 2026 there's also a free **cloud brain** (Ox Alpha, a stealth
+preview model on OpenRouter): genuinely hard questions, coding questions,
+and everything mid-game (it costs the PC nothing) route to it; everyday
+chat stays on the local brain and never leaves the PC. Honest trade-offs:
+those routed questions DO leave the PC (the model's lab can see them,
+passwords are stripped first), and stealth models get retired without
+notice — when Ox dies, TARS quietly falls back to local and someone should
+swap `CLOUD_MODEL` to the next free one. See `cloud_brain.py`.
+
 ## What TARS can do right now (Phases 1–3)
 - Wake on **"Hey TARS"** (local Vosk keyword spotting — free, offline, no account)
 - Understand spoken questions (local Whisper — nothing leaves the PC)

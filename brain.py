@@ -484,7 +484,81 @@ class _VoiceGuarded:
         if refused:
             self._brain._journal(f"voice-blocked {name}")
             return refused
-        return self._box.run(name, args)
+        result = self._box.run(name, args)
+        return self._not_a_parrot(name, result)
+
+    # Every skill call comes through here, which makes it the one place that
+    # can notice TARS saying the exact same sentence twice.
+    #
+    # He asked for a VPN and got "Searching for best VPN for location change
+    # in your browser." Then he said "now download one of them" — a
+    # different request — and got that identical sentence back, word for
+    # word. Nothing was wrong with either answer on its own; saying the
+    # second one is what made it look like TARS had stopped listening.
+    #
+    # This doesn't invent a better answer, because it can't. It admits the
+    # repeat, which at least tells him the request landed and didn't get
+    # him anywhere — so he can rephrase instead of repeating himself.
+    _SAID_BEFORE = ("That's the same answer I just gave you. Say it a "
+                    "different way and I'll have another go.")
+
+    def _not_a_parrot(self, name: str, result):
+        """Word-for-word repeats mean the request didn't land — so try again
+        properly instead of saying it twice.
+
+        He asked for a VPN, got "Searching for best VPN... in your browser",
+        then said "now download one of them" — a different request — and got
+        that exact sentence back. Neither answer was wrong on its own;
+        repeating it is what made it look like TARS had stopped listening.
+
+        His ask was to make this work for ANY command, so it lives here,
+        where every skill call passes through. And it doesn't just apologise:
+        it routes the request again with the skill that already answered
+        RULED OUT, so TARS actually tries something else. Only if there is
+        no other answer does it admit the repeat.
+        """
+        try:
+            said = (result or "").strip()
+            last_name, last_said, last_text = getattr(
+                self, "_last_reply", ("", "", ""))
+            asked = getattr(self._brain, "_asked_now", "")
+            self._last_reply = (name, said, asked)
+            # Repeating the same skill's line for the SAME words is fine —
+            # "volume up" twice should answer twice. It's only a failure when
+            # he asked something DIFFERENT and got the identical sentence.
+            if not (said and said == last_said and len(said) > 30
+                    and asked and asked != last_text):
+                return result
+            better = self._try_something_else(name, asked)
+            if better:
+                self._last_reply = (name, better, asked)
+                return better
+            return said + " " + self._SAID_BEFORE
+        except Exception:
+            return result
+
+    def _try_something_else(self, avoid: str, text: str):
+        """Route again, refusing the skill that just repeated itself."""
+        brain = self._brain
+        if getattr(brain, "_retrying", False) or avoid in brain._NO_RESCUE:
+            return None
+        brain._retrying = True
+        try:
+            route = brain._route(text, must_act=True)
+            name = route.get("skill", "chat")
+            if (name == avoid or name == "chat"
+                    or name in brain._NO_RESCUE
+                    or name not in {s["skill"] for s in self.catalog()}):
+                return None
+            answer = (self._box.run(name, route.get("args") or {}) or "").strip()
+            if len(answer) < 2:
+                return None
+            brain._journal(f"{name} (second attempt after a repeated answer)")
+            return answer
+        except Exception:
+            return None
+        finally:
+            brain._retrying = False
 
 
 class Brain:
@@ -589,6 +663,9 @@ class Brain:
 
     def _handle_routed(self, text: str) -> str | None:
         """All routing/gates/skills. Returns None when it's conversation."""
+        # what he just asked, so the repeat guard can tell a genuine
+        # follow-up from the same words said twice
+        self._asked_now = text
         lowered = text.lower()
 
         # a confirmation is waiting on the owner's yes/no (deletion or big move)
@@ -3711,34 +3788,25 @@ class Brain:
         messages = self._chat_messages(text)
         full, buffer = [], ""
         held = None  # a contentless first sentence, awaiting real content
+        chosen = self._model_for(text)
+        self._answered_on = chosen
         try:
-            with requests.post(
-                OLLAMA_URL,
-                json={"model": self._model_for(text), "messages": messages,
-                      "stream": True, "think": False,
-                      "keep_alive": KEEP_ALIVE, "options": {"num_predict": 160}},
-                timeout=120, stream=True,
-            ) as r:
-                r.raise_for_status()
-                for line in r.iter_lines():
-                    if not line:
-                        continue
-                    tok = json.loads(line).get("message", {}).get("content", "")
-                    buffer += tok
-                    # emit complete sentences as they land
-                    while True:
-                        m = re.search(r"[.!?][\"']?\s", buffer)
-                        if not m or m.end() < 25:
-                            break
-                        sentence, buffer = buffer[:m.end()].strip(), buffer[m.end():]
-                        if not full:  # first sentence: no throat-clearing
-                            sentence = self._strip_filler(sentence)
-                            if held is None and self._contentless(sentence):
-                                held = sentence  # don't speak it — wait to
-                                continue         # see if real content follows
-                        held = None  # real content arrived; the warm-up dies
-                        full.append(sentence)
-                        yield sentence
+            for tok in self._chat_tokens(chosen, messages):
+                buffer += tok
+                # emit complete sentences as they land
+                while True:
+                    m = re.search(r"[.!?][\"']?\s", buffer)
+                    if not m or m.end() < 25:
+                        break
+                    sentence, buffer = buffer[:m.end()].strip(), buffer[m.end():]
+                    if not full:  # first sentence: no throat-clearing
+                        sentence = self._strip_filler(sentence)
+                        if held is None and self._contentless(sentence):
+                            held = sentence  # don't speak it — wait to
+                            continue         # see if real content follows
+                    held = None  # real content arrived; the warm-up dies
+                    full.append(sentence)
+                    yield sentence
         except (requests.ConnectionError, requests.Timeout):
             if not self._wake_ollama():
                 yield ("My local brain is offline and I couldn't restart it. "
@@ -3790,6 +3858,9 @@ class Brain:
             import model_router
 
             if (answer and len(answer) > 40
+                    # answered by the cloud brain already — the "off my local
+                    # brain" disclaimer would be a lie, and Ox IS a big brain
+                    and not str(getattr(self, "_answered_on", "")).startswith("cloud:")
                     and model_router.deserves_big_brain(text)
                     and "big brain" not in (answer or "").lower()):
                 return answer + self.BIG_BRAIN_OFFER
@@ -3821,8 +3892,58 @@ class Brain:
         except Exception:
             return MODEL
 
+    def _chat_tokens(self, chosen: str, messages: list[dict]):
+        """Yield reply tokens from whichever brain won the routing.
+
+        The cloud brain surfaces every failure as requests.ConnectionError,
+        so the caller's existing network handling treats a dead cloud like a
+        dead Ollama and the answer happens locally instead.
+        """
+        if chosen.startswith("cloud:"):
+            import cloud_brain
+
+            began = time.time()
+            yield from cloud_brain.ask_stream(messages)
+            try:
+                import model_router
+
+                model_router.record(chosen, time.time() - began)
+            except Exception:
+                pass
+            return
+        with requests.post(
+            OLLAMA_URL,
+            json={"model": chosen, "messages": messages,
+                  "stream": True, "think": False,
+                  "keep_alive": KEEP_ALIVE, "options": {"num_predict": 160}},
+            timeout=120, stream=True,
+        ) as r:
+            r.raise_for_status()
+            for line in r.iter_lines():
+                if not line:
+                    continue
+                yield json.loads(line).get("message", {}).get("content", "")
+
     def _ask_ollama(self, messages: list[dict], text: str = "") -> str:
         chosen = self._model_for(text)
+        self._answered_on = chosen
+        if chosen.startswith("cloud:"):
+            try:
+                import cloud_brain
+
+                began = time.time()
+                answer = cloud_brain.ask(messages)
+                try:
+                    import model_router
+
+                    model_router.record(chosen, time.time() - began)
+                except Exception:
+                    pass
+                return answer
+            except Exception:
+                # cloud_brain has already noted its own failure and started
+                # its backoff; the answer still has to happen, locally
+                self._answered_on = chosen = MODEL
         began = time.time()
         r = requests.post(
             OLLAMA_URL,

@@ -39,10 +39,21 @@ def check(name, got, want):
           + ("" if ok else f"\n         got {got!r}, wanted {want!r}"))
 
 
-def pretend(installed, loaded):
-    """Fake what Ollama has and what's in memory."""
+_real_cloud = mr._cloud
+
+
+def pretend(installed, loaded, cloud=""):
+    """Fake what Ollama has, what's in memory, and whether the cloud brain
+    is available.
+
+    The cloud brain arrived after these tests did. It legitimately beats the
+    local ladder for code and while gaming — it's free and it's a better
+    coder than a 7B — so it has to be pinned OFF to test the local ladder at
+    all, and checked separately on its own terms.
+    """
     mr._installed.update(names=list(installed), at=float("inf"))
     mr._loaded.update(names=list(loaded), at=float("inf"))
+    mr._cloud = (lambda: cloud)
 
 
 print("\nscoring — is this question actually hard?")
@@ -287,6 +298,50 @@ for said in ["i'm not watching taskmaster",
 check("a plain command means it", means_it("clip that"), True)
 check("a negated one doesn't", means_it("dont clip that", 5), False)
 check("and asking about it doesn't", means_it("what does clip that do"), False)
+
+
+print(chr(10) + "the cloud brain, which outranks the local ladder where it is better")
+CLOUD = "cloud:stealth/ox-alpha"
+pretend(HIS_MACHINE, ["qwen2.5:3b", DEFAULT], cloud=CLOUD)
+check("a coding question goes to the cloud, not the local coder",
+      mr.pick("theres a bug in my python function", DEFAULT)[0], CLOUD)
+check("and mid-game it does too, costing this PC nothing",
+      mr.pick("what time is it", DEFAULT, gaming=True)[0], CLOUD)
+check("ordinary chat still stays local",
+      mr.pick("hows your day", DEFAULT)[0] in (DEFAULT, "qwen2.5:3b"), True)
+pretend(HIS_MACHINE, ["qwen2.5:3b", DEFAULT], cloud="")
+check("with no cloud it falls back to the local coder",
+      mr.pick("theres a bug in my python function", DEFAULT)[0], "qwen2.5-coder:14b")
+check("and mid-game to the small local one",
+      mr.pick("what time is it", DEFAULT, gaming=True)[0], "qwen2.5:3b")
+
+
+print(chr(10) + "a repeat on ANY command makes it try something else")
+from brain import _VoiceGuarded
+class _Box2:
+    def run(self, name, args):
+        return {"browser_search": "Searching for best VPN for changing location in your browser.",
+                "open_app": "Opened the downloads folder for you."}.get(name, "")
+    def catalog(self): return [{"skill": "browser_search"}, {"skill": "open_app"}]
+class _B2:
+    _NO_RESCUE = {"chat"}
+    _asked_now = ""
+    def _voice_block(self, n): return None
+    def _journal(self, l): pass
+    def _route(self, text, must_act=False): return {"skill": "open_app", "args": {}}
+_b2 = _B2(); _g2 = _VoiceGuarded(_Box2(), _b2)
+_b2._asked_now = "find me the best vpn"
+_first2 = _g2.run("browser_search", {})
+_b2._asked_now = "now download one of them"
+_second2 = _g2.run("browser_search", {})
+check("a different question gets a different action, not the same line",
+      _second2, "Opened the downloads folder for you.")
+check("the first answer is untouched", _first2.startswith("Searching"), True)
+_b2._asked_now = "volume 30"
+_g3 = _VoiceGuarded(_Box2(), _b2)
+_g3.run("open_app", {})
+check("the SAME command twice is left alone",
+      _g3.run("open_app", {}), "Opened the downloads folder for you.")
 
 print(f"\n{passed} passed, {failed} failed\n")
 sys.exit(1 if failed else 0)
