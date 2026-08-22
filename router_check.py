@@ -334,14 +334,56 @@ _b2._asked_now = "find me the best vpn"
 _first2 = _g2.run("browser_search", {})
 _b2._asked_now = "now download one of them"
 _second2 = _g2.run("browser_search", {})
-check("a different question gets a different action, not the same line",
-      _second2, "Opened the downloads folder for you.")
+# It used to RUN the alternative automatically. That executed an action he
+# had not asked for, on the conversation thread, and when the second skill
+# blocked TARS went silent mid-sentence — "he js left me on read". It now
+# names the alternative and waits to be asked.
+check("a repeated line is called out rather than parroted",
+      "same answer I just gave" in _second2, True)
+check("and it offers what else it could do, without doing it",
+      "could try" in _second2 or _second2.endswith("another go."), True)
 check("the first answer is untouched", _first2.startswith("Searching"), True)
 _b2._asked_now = "volume 30"
 _g3 = _VoiceGuarded(_Box2(), _b2)
 _g3.run("open_app", {})
 check("the SAME command twice is left alone",
       _g3.run("open_app", {}), "Opened the downloads folder for you.")
+
+
+print(chr(10) + "an app to install is not a GitHub search")
+from brain import wants_an_app_not_a_library as _app
+# "Find me a good VPN and open the installer" went to find_tool and came
+# back with OpenWrt config files and starred repos. He wanted something to
+# install; find_tool is for a developer after a library.
+for _s in ["find me a good vpn and open the installer", "download me the best vpn",
+           "recommend a good antivirus", "get me a better browser"]:
+    check(f"app: {_s[:40]}", _app(_s), True)
+for _s in ["find me a python library for pdfs", "search github for a subtitle downloader",
+           "is there a package for reading pdfs", "whats the weather",
+           "find my keys"]:
+    check(f"not an app: {_s[:36]}", _app(_s), False)
+
+print(chr(10) + "no skill can hold the conversation open forever")
+import time as _tm
+class _Slow:
+    def run(self, n, a):
+        _tm.sleep(30)
+        return "done"
+    def catalog(self): return []
+class _B3:
+    _NO_RESCUE = set(); _asked_now = "x"
+    def _voice_block(self, n): return None
+    def _journal(self, l): pass
+_old_p = _VoiceGuarded.PATIENCE
+_VoiceGuarded.PATIENCE = 2
+try:
+    _g4 = _VoiceGuarded(_Slow(), _B3())
+    _t0 = _tm.time(); _r4 = _g4.run("find_tool", {})
+    check("a stalling skill still gets an answer out", _tm.time()-_t0 < 5, True)
+    check("and says it is still working", "taking a while" in _r4, True)
+finally:
+    _VoiceGuarded.PATIENCE = _old_p
+check("the limit is generous enough for real work", _VoiceGuarded.PATIENCE >= 20, True)
 
 print(f"\n{passed} passed, {failed} failed\n")
 sys.exit(1 if failed else 0)

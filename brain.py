@@ -396,6 +396,29 @@ def wants_clip(lowered: str) -> tuple[str, int]:
     return "", 0
 
 
+# find_tool searches GitHub and PyPI — for a DEVELOPER looking for a library.
+# "Find me a good VPN" is not that: he wants an app to install, and what he
+# got back was OpenWrt config files and a starred repo list. The skill's own
+# description says "NOT for general web answers", and the router picked it
+# anyway, so this decides it rather than hoping.
+#
+# The tell is what kind of thing he's after. A program a person installs goes
+# to the browser; a library, package or repo goes to find_tool.
+_WANTS_AN_APP = re.compile(
+    r"\b(?:find|get|download|install|recommend|suggest)\b[^.?]{0,30}"
+    r"\b(?:vpn|antivirus|browser|app|apps|programme?|program|software|"
+    r"game|launcher|driver|editor|client)\b")
+_WANTS_A_LIBRARY = re.compile(
+    r"\b(?:github|repo|repository|library|libraries|package|module|pip|npm|"
+    r"open.?source|api|sdk|python|javascript|rust\b)\b")
+
+
+def wants_an_app_not_a_library(lowered: str) -> bool:
+    """He's after something to install, not something to import."""
+    return bool(_WANTS_AN_APP.search(lowered)
+                and not _WANTS_A_LIBRARY.search(lowered))
+
+
 # Screen Rewind. Questions about something that WAS on the screen look, to a
 # router, exactly like questions about his notes — "what was that thing about
 # the assignment" could be either. So the past tense plus a screen-ish word
@@ -479,13 +502,58 @@ class _VoiceGuarded:
     def __getattr__(self, item):  # catalog(), reload(), everything else
         return getattr(self._box, item)
 
+    # No skill gets to hold the conversation open forever.
+    #
+    # This is the third time in a day that one slow skill has made TARS go
+    # silent: a 29MB clip upload, and then find_tool, which asks GitHub for
+    # results and then PyPI about EACH one, ten seconds apiece. The reply
+    # never finishes, and because the loop shuts the microphone before it
+    # speaks and reopens it after, TARS sits there alive and deaf. From the
+    # outside: "he js left me on read".
+    #
+    # Fixing them one at a time clearly wasn't working, so the limit lives
+    # here, where every skill call already passes. The work is NOT killed —
+    # it keeps going and announces itself when it lands. What changes is
+    # that TARS answers, and gets its ears back.
+    PATIENCE = 25
+
     def run(self, name: str, args: dict):
         refused = self._brain._voice_block(name)
         if refused:
             self._brain._journal(f"voice-blocked {name}")
             return refused
-        result = self._box.run(name, args)
-        return self._not_a_parrot(name, result)
+
+        import threading as _t
+
+        done = {}
+
+        def work():
+            try:
+                done["result"] = self._box.run(name, args)
+            except Exception as e:
+                done["result"] = f"That didn't work: {e}"
+
+        worker = _t.Thread(target=work, daemon=True)
+        worker.start()
+        worker.join(self.PATIENCE)
+        if worker.is_alive():
+            self._brain._journal(f"{name} took longer than {self.PATIENCE}s")
+
+            def tell_him_later():
+                worker.join(600)
+                answer = (done.get("result") or "").strip()
+                if answer:
+                    try:
+                        import announce
+
+                        announce.post(answer, hold_during_quiet=True)
+                    except Exception:
+                        pass
+
+            _t.Thread(target=tell_him_later, daemon=True).start()
+            return (f"That one's taking a while — I've left it running and "
+                    f"I'll tell you the moment it lands.")
+        return self._not_a_parrot(name, done.get("result"))
 
     # Every skill call comes through here, which makes it the one place that
     # can notice TARS saying the exact same sentence twice.
@@ -529,34 +597,37 @@ class _VoiceGuarded:
             if not (said and said == last_said and len(said) > 30
                     and asked and asked != last_text):
                 return result
-            better = self._try_something_else(name, asked)
-            if better:
-                self._last_reply = (name, better, asked)
-                return better
-            return said + " " + self._SAID_BEFORE
+            return said + " " + self._SAID_BEFORE + self._suggest_instead(
+                name, asked)
         except Exception:
             return result
 
-    def _try_something_else(self, avoid: str, text: str):
-        """Route again, refusing the skill that just repeated itself."""
+    def _suggest_instead(self, avoid: str, text: str):
+        """What ELSE could have answered this — named, never run.
+
+        The first version of this ran the alternative skill automatically.
+        That was wrong twice over. It executed an action he had not asked
+        for, on a guess; and it did so on the conversation thread, which
+        holds the microphone shut until the reply finishes — so when the
+        second skill blocked, TARS went silent mid-sentence and stayed that
+        way. "he js left me on read".
+
+        Suggesting costs nothing and can't hang: routing is a question, not
+        an action.
+        """
         brain = self._brain
         if getattr(brain, "_retrying", False) or avoid in brain._NO_RESCUE:
-            return None
+            return ""
         brain._retrying = True
         try:
             route = brain._route(text, must_act=True)
             name = route.get("skill", "chat")
-            if (name == avoid or name == "chat"
-                    or name in brain._NO_RESCUE
+            if (name in (avoid, "chat") or name in brain._NO_RESCUE
                     or name not in {s["skill"] for s in self.catalog()}):
-                return None
-            answer = (self._box.run(name, route.get("args") or {}) or "").strip()
-            if len(answer) < 2:
-                return None
-            brain._journal(f"{name} (second attempt after a repeated answer)")
-            return answer
+                return ""
+            return f" I could try {name.replace('_', ' ')} instead — say the word."
         except Exception:
-            return None
+            return ""
         finally:
             brain._retrying = False
 
@@ -1499,6 +1570,10 @@ class Brain:
                     return reply
         # hard gates: dangerous or noisy skills need the trigger word actually
         # said — the router alone has let garbled speech through before
+        # an app to install is a browser job, not a GitHub search
+        if name == "find_tool" and wants_an_app_not_a_library(lowered):
+            name = "browser_search"
+            args = {"query": text}
         if name == "run_command" and "run " not in lowered and "command" not in lowered:
             name = "chat"
         # folders are open_app's job — "open Pictures folder" fell to chat,
